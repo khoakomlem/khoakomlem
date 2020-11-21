@@ -13,8 +13,9 @@
 <br>
 <br>
 <p align="center">
-<a href="https://twitter.com/khoakomlem" target="_blank"><img align="center" src="https://cdn.jsdelivr.net/npm/simple-icons@3.0.1/icons/twitter.svg" alt="khoakomlem" height="30" width="30" /></a>
-  <a href="https://facebook.com/khoakomlem" target="_blank"><img align="center" src="https://cdn.jsdelivr.net/npm/simple-icons@3.0.1/icons/facebook.svg" alt="khoakomlem" height="30" width="30" /></a>
+  <a href="https://khoakomlem.netlify.app/" target="_blank"><img align="center" src="https://cdn.jsdelivr.net/npm/simple-icons@3.0.1/icons/internetexplorer.svg" alt="portfolio" height="30" width="30" /></a>
+<a href="https://twitter.com/khoakomlem" target="_blank"><img align="center" src="https://cdn.jsdelivr.net/npm/simple-icons@3.0.1/icons/twitter.svg" alt="twitter" height="30" width="30" /></a>
+  <a href="https://facebook.com/khoakomlem" target="_blank"><img align="center" src="https://cdn.jsdelivr.net/npm/simple-icons@3.0.1/icons/facebook.svg" alt="facebook" height="30" width="30" /></a>
 </p>
 <br>
 <br>
