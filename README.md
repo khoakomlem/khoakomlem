@@ -1,7 +1,6 @@
 # Hi there 👋
 #### 🔭 I’m currently working on THPT Trấn Biên
-#### 🌱 I’m currently learning Nodejs, Go, and so on . . .
-#### 👯 I’m looking to collaborate on Forein Company
+#### 🌱 I’m currently learning algorithms, making some projects using Nodejs, Go, . . .
 [![Anurag's github stats](https://github-readme-stats.vercel.app/api?username=khoakomlem&show_icons=true&theme=nightowl)](https://github.com/khoakomlem)
 
 <br>
