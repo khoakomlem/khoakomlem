@@ -3845,8 +3845,12 @@ exports.Default = {
         key: Math.random(),
         src: 'img/carousel/3.png'
       })],
-      content: 'Bot',
-      tags: ['idk', 'idk']
+      content: react_1["default"].createElement("p", null, "Bot t\u1EF1 \u0111\u1ED9ng tr\u1EA3 l\u1EDDi tin nh\u1EAFn khi nh\u1EADp l\u1EC7nh", react_1["default"].createElement("br", null), "Reposistory: ", react_1["default"].createElement("a", {
+        href: 'https://github.com/kb2ateam/kb2abot-client',
+        target: '_blank',
+        rel: 'noreferrer'
+      }, "here"), react_1["default"].createElement("br", null), "Demo: V\xEC \u0111\xE2y l\xE0 project l\xE0m v\u1EC1 facebook, d\u1EC5 b\u1ECB b\u1EBF acc \u0111i n\xEAn kh\xF4ng c\xF3 demo :("),
+      tags: ['Facebook-chat-api', 'Socket.io']
     })
   }, {
     targetModal: 'project-2-modal',
@@ -3867,8 +3871,16 @@ exports.Default = {
         key: Math.random(),
         src: 'img/carousel/6.png'
       })],
-      content: 'Bot',
-      tags: ['idk', 'idk']
+      content: react_1["default"].createElement("p", null, "Game gi\u1ED1ng flapping online c\u1EE7a havana24 nh\u01B0ng tr\xEAn web", react_1["default"].createElement("br", null), "Reposistory client: ", react_1["default"].createElement("a", {
+        href: 'https://github.com/khoakomlem/flapping-online2',
+        target: '_blank',
+        rel: 'noreferrer'
+      }, "here"), react_1["default"].createElement("br", null), "Demo: ", react_1["default"].createElement("a", {
+        href: 'https://flapping-online.herokuapp.com/',
+        target: '_blank',
+        rel: 'noreferrer'
+      }, "here")),
+      tags: ['P5js', 'Socket.io']
     })
   }, {
     targetModal: 'project-3-modal',
@@ -3878,19 +3890,27 @@ exports.Default = {
     }),
     modal: react_1["default"].createElement(Modal_1["default"], {
       id: 'project-3-modal',
-      title: 'KB2A bot',
+      title: 'Gunsurvival',
       carousel: [react_1["default"].createElement("img", {
         key: Math.random(),
-        src: 'img/carousel/1.png'
+        src: 'img/carousel/7.png'
       }), react_1["default"].createElement("img", {
         key: Math.random(),
-        src: 'img/carousel/2.png'
+        src: 'img/carousel/8.png'
       }), react_1["default"].createElement("img", {
         key: Math.random(),
-        src: 'img/carousel/3.png'
+        src: 'img/carousel/9.png'
       })],
-      content: 'Bot',
-      tags: ['idk', 'idk']
+      content: react_1["default"].createElement("p", null, "Game b\u1EAFn s\xFAng 2d gi\u1ED1ng surviv.io (\u1EA3nh tr\xEAn l\xE0 b\u1EA3n \u0111\xE3 refactor n\xEAn h\u01A1i \u0111\u01A1n gi\u1EA3n)", react_1["default"].createElement("br", null), "Phi\xEAn b\u1EA3n \u0111\u1EA7u ti\xEAn \u0111\xE3 ho\xE0n th\xE0nh, c\xF3 nhi\u1EC1u s\xFAng v\xE0 ch\u1EBF \u0111\u1ED9 nh\u01B0ng v\xEC code x\u1EA5u qu\xE1 n\xEAn \u0111\xE3 refactor l\u1EA1i va k\u1EBFt qu\u1EA3 gi\u1EDD v\u1EABn ch\u01B0a th\u1EC3 ho\xE0n th\xE0nh game v\xEC thi\u1EBFu ki\u1EBFn th\u1EE9c", react_1["default"].createElement("br", null), "Reposistory: ", react_1["default"].createElement("a", {
+        href: 'https://github.com/khoakomlem/gunsurvival-dedicated-server',
+        target: '_blank',
+        rel: 'noreferrer'
+      }, "here"), react_1["default"].createElement("br", null), "Demo (c\xF2n nhi\u1EC1u l\u1ED7i nh\u01B0ng code x\u1ECBn :v): ", react_1["default"].createElement("a", {
+        href: 'http://gunsurvival.herokuapp.com/?server=http://gunsurvival.herokuapp.com',
+        target: '_blank',
+        rel: 'noreferrer'
+      }, "here")),
+      tags: ['Socket.io', 'Quadtree', 'SAT 2D', 'P5js', 'Native ES Module']
     })
   }],
   contacts: [{

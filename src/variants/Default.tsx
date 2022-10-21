@@ -94,8 +94,12 @@ export const Default: DefaultProps = {
 					(<img key={Math.random()} src='img/carousel/2.png' />),
 					(<img key={Math.random()} src='img/carousel/3.png' />),
 				]}
-				content='Bot'
-				tags={['idk', 'idk']}
+				content={(
+					<p>Bot tự động trả lời tin nhắn khi nhập lệnh<br/>
+                    Reposistory: <a href='https://github.com/kb2ateam/kb2abot-client' target='_blank' rel='noreferrer'>here</a><br/>
+                    Demo: Vì đây là project làm về facebook, dễ bị bế acc đi nên không có demo :(
+					</p>)}
+				tags={['Facebook-chat-api', 'Socket.io']}
 			/>,
 		},
 		{
@@ -114,8 +118,12 @@ export const Default: DefaultProps = {
 					(<img key={Math.random()} src='img/carousel/5.png' />),
 					(<img key={Math.random()} src='img/carousel/6.png' />),
 				]}
-				content='Bot'
-				tags={['idk', 'idk']}
+				content={(
+					<p>Game giống flapping online của havana24 nhưng trên web<br/>
+                    Reposistory client: <a href='https://github.com/khoakomlem/flapping-online2' target='_blank' rel='noreferrer'>here</a><br/>
+                    Demo: <a href='https://flapping-online.herokuapp.com/' target='_blank' rel='noreferrer'>here</a>
+					</p>)}
+				tags={['P5js', 'Socket.io']}
 			/>,
 		},
 		{
@@ -128,14 +136,18 @@ export const Default: DefaultProps = {
 			),
 			modal: <Modal
 				id='project-3-modal'
-				title='KB2A bot'
+				title='Gunsurvival'
 				carousel={[
-					(<img key={Math.random()} src='img/carousel/1.png' />),
-					(<img key={Math.random()} src='img/carousel/2.png' />),
-					(<img key={Math.random()} src='img/carousel/3.png' />),
+					(<img key={Math.random()} src='img/carousel/7.png' />),
+					(<img key={Math.random()} src='img/carousel/8.png' />),
+					(<img key={Math.random()} src='img/carousel/9.png' />),
 				]}
-				content='Bot'
-				tags={['idk', 'idk']}
+				content={(
+					<p>Game bắn súng 2d giống surviv.io (ảnh trên là bản đã refactor nên hơi đơn giản)<br/>Phiên bản đầu tiên đã hoàn thành, có nhiều súng và chế độ nhưng vì code xấu quá nên đã refactor lại va kết quả giờ vẫn chưa thể hoàn thành game vì thiếu kiến thức<br/>
+                    Reposistory: <a href='https://github.com/khoakomlem/gunsurvival-dedicated-server' target='_blank' rel='noreferrer'>here</a><br/>
+                    Demo (còn nhiều lỗi nhưng code xịn :v): <a href='http://gunsurvival.herokuapp.com/?server=http://gunsurvival.herokuapp.com' target='_blank' rel='noreferrer'>here</a>
+					</p>)}
+				tags={['Socket.io', 'Quadtree', 'SAT 2D', 'P5js', 'Native ES Module']}
 			/>,
 		},
 	],

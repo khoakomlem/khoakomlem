@@ -4,7 +4,7 @@ export type ModalProps = {
 	id: string;
 	title: string;
 	carousel: JSX.Element[];
-	content: string;
+	content: JSX.Element;
 	tags: string[];
 };
 
