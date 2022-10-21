@@ -15,7 +15,7 @@ export default function Navbar(props: NavbarProps) {
 				<div className='navbar-end'>
 					<div className='navbar-item'>
 						<a
-							href={`https://github.com/${props.githubUsername}`}
+							href={`https://github.com/${props.githubUsername}/${props.githubUsername}`}
 							className='icon is-large has-text-light'
 							target='_blank'
 							rel='noreferrer'
