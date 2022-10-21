@@ -3562,7 +3562,7 @@ function Navbar(props) {
   }, react_1["default"].createElement("div", {
     className: 'navbar-item'
   }, react_1["default"].createElement("a", {
-    href: "https://github.com/".concat(props.githubUsername),
+    href: "https://github.com/".concat(props.githubUsername, "/").concat(props.githubUsername),
     className: 'icon is-large has-text-light',
     target: '_blank',
     rel: 'noreferrer'
