@@ -3996,8 +3996,8 @@ exports.__esModule = true;
 exports.ITMC = void 0;
 var Default_1 = __webpack_require__(/*! ./Default */ "./src/variants/Default.tsx");
 exports.ITMC = __assign(__assign({}, Default_1.Default), {
-  status: 'Looking forward to getting into ITMC club ^^',
-  aboutDescription: 'I am a student at Học viện Công nghệ Bưu chính Viễn thông and a Founder Co-op at the KB2A team. I am keen on solving problems and enjoy working under pressure. During my education in school, I am looking forward to getting into the ITMC club to make friends and self-develop. It would be nice to be accepted by ITMC club. Thank you in advance.'
+  status: 'Looking forward to getting into ITMC ^^',
+  aboutDescription: 'I am a student at Học viện Công nghệ Bưu chính Viễn thông and a Founder Co-op at the KB2A team. I am keen on solving problems and enjoy working under pressure. I am looking forward to getting into the ITMC club to make friends and develop myself during my time at our university. It would be nice to be accepted by ITMC. Thank you in advance.'
 });
 
 /***/ }),
