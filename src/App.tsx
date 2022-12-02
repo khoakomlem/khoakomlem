@@ -12,7 +12,7 @@ import Project from './components/Project';
 import Contact from './components/Contact';
 
 import * as Variant from './variants';
-import type {DefaultProps} from './variants/Default';
+import type{DefaultProps} from './variants/Default';
 
 function getVariant(key = ''): DefaultProps {
 	switch (key.toLowerCase()) {

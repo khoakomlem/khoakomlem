@@ -1,5 +1,5 @@
 import React from 'react';
-import type {CompanyType} from './Card';
+import type{CompanyType} from './Card';
 import Card from './Card';
 
 type ExperienceProps = {
@@ -13,7 +13,7 @@ export default function Experience(props: ExperienceProps) {
 				<h1 className='title'>Experience</h1>
 				<hr />
 				{
-					props.experiences.map(e => (
+					props.experiences.map((e: CompanyType) => (
 						<Card key={Math.random()} name={e.name} datetime={e.datetime} logo={e.logo} content={e.content} />
 					))
 				}

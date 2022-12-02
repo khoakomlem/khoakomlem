@@ -1,5 +1,5 @@
 import React from 'react';
-import type {DefaultProps} from './Default';
+import type{DefaultProps} from './Default';
 import {Default} from './Default';
 
 export const Freelance: DefaultProps = {

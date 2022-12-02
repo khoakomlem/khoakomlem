@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/naming-convention */
-import type {DefaultProps} from './Default';
+import type{DefaultProps} from './Default';
 import {Default} from './Default';
 
 export const ITMC: DefaultProps = {

@@ -1,7 +1,7 @@
 import React from 'react';
-import type {ContactType} from '../components/Contact/Card';
-import type {CompanyType} from '../components/Experience/Card';
-import type {ProjectType} from '../components/Project/Card';
+import type{ContactType} from '../components/Contact/Card';
+import type{CompanyType} from '../components/Experience/Card';
+import type{ProjectType} from '../components/Project/Card';
 import Modal from '../components/Project/Modal';
 
 export type DefaultProps = {
@@ -107,12 +107,12 @@ export const Default: DefaultProps = {
 			title: 'Flapping Online',
 			logo: (
 				<img
-					src='https://scontent.fsgn5-12.fna.fbcdn.net/v/t1.18169-9/10003531_577064822389461_1343229127_n.png?_nc_cat=103&ccb=1-7&_nc_sid=09cbfe&_nc_ohc=x-n1lUm4ZpoAX9I1maX&_nc_ht=scontent.fsgn5-12.fna&oh=00_AT-dtcOboaV9P3TSqvProgEOro-QMw8qVtX4SklybOYRJA&oe=6373F0C2'
+					src='https://i.imgur.com/5x6tWoj.png'
 				/>
 			),
 			modal: <Modal
 				id= 'project-2-modal'
-				title='KB2A bot'
+				title='Flapping Online'
 				carousel={[
 					(<img key={Math.random()} src='img/carousel/4.png' />),
 					(<img key={Math.random()} src='img/carousel/5.png' />),
