@@ -32,7 +32,7 @@ function App() {
 	return (
 		<>
 			<Navbar githubUsername={variant.githubUsername} />
-			<NameStatus fullname={variant.fullname} status={variant.status}/>
+			<NameStatus fullname={variant.fullname} status={variant.status} avatarUrl='https://avatars.githubusercontent.com/u/46867018'/>
 			<About text={variant.aboutDescription}/>
 			<Experience experiences={variant.experiences} />
 			<Project projects={variant.projects}/>

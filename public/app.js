@@ -3566,7 +3566,8 @@ function App() {
     githubUsername: variant.githubUsername
   }), react_1["default"].createElement(NameStatus_1["default"], {
     fullname: variant.fullname,
-    status: variant.status
+    status: variant.status,
+    avatarUrl: 'https://avatars.githubusercontent.com/u/46867018'
   }), react_1["default"].createElement(About_1["default"], {
     text: variant.aboutDescription
   }), react_1["default"].createElement(Experience_1["default"], {
@@ -3787,7 +3788,7 @@ function NameStatus(props) {
     className: 'image is-128x128'
   }, react_1["default"].createElement("img", {
     className: 'is-rounded',
-    src: 'img/me-big.jpg'
+    src: props.avatarUrl
   })))), react_1["default"].createElement("div", {
     className: 'columns has-text-centered'
   }, react_1["default"].createElement("div", {

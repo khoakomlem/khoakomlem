@@ -3,6 +3,7 @@ import React from 'react';
 type NameStatusProps = {
 	fullname: string;
 	status: string;
+	avatarUrl: string;
 };
 
 export default function NameStatus(props: NameStatusProps) {
@@ -13,7 +14,7 @@ export default function NameStatus(props: NameStatusProps) {
 					<div className='level'>
 						<div className='level-item has-text-centered'>
 							<figure className='image is-128x128'>
-								<img className='is-rounded' src='img/me-big.jpg' />
+								<img className='is-rounded' src={props.avatarUrl} />
 							</figure>
 						</div>
 					</div>
