@@ -22,6 +22,10 @@ export default function NameStatus(props: NameStatusProps) {
 						<div className='column'>
 							<h1 className='title is-1'>{props.fullname}</h1>
 							<h2 className='subtitle'>{props.status}</h2>
+							<img
+								src='https://visitor-badge.glitch.me/badge?page_id=khoakomlem.khoakomlem'
+								alt='Visitors'
+							/>
 						</div>
 					</div>
 				</div>

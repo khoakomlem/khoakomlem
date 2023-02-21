@@ -2,10 +2,10 @@
 /******/ 	"use strict";
 /******/ 	var __webpack_modules__ = ({
 
-/***/ "./node_modules/.pnpm/@remix-run+router@1.0.4/node_modules/@remix-run/router/dist/router.js":
-/*!**************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/@remix-run+router@1.0.4/node_modules/@remix-run/router/dist/router.js ***!
-  \**************************************************************************************************/
+/***/ "./node_modules/@remix-run/router/dist/router.js":
+/*!*******************************************************!*\
+  !*** ./node_modules/@remix-run/router/dist/router.js ***!
+  \*******************************************************/
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -13,8 +13,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "AbortedDeferredError": () => (/* binding */ AbortedDeferredError),
 /* harmony export */   "Action": () => (/* binding */ Action),
 /* harmony export */   "ErrorResponse": () => (/* binding */ ErrorResponse),
+/* harmony export */   "IDLE_BLOCKER": () => (/* binding */ IDLE_BLOCKER),
 /* harmony export */   "IDLE_FETCHER": () => (/* binding */ IDLE_FETCHER),
 /* harmony export */   "IDLE_NAVIGATION": () => (/* binding */ IDLE_NAVIGATION),
+/* harmony export */   "UNSAFE_DEFERRED_SYMBOL": () => (/* binding */ UNSAFE_DEFERRED_SYMBOL),
+/* harmony export */   "UNSAFE_DeferredData": () => (/* binding */ DeferredData),
 /* harmony export */   "UNSAFE_convertRoutesToDataRoutes": () => (/* binding */ convertRoutesToDataRoutes),
 /* harmony export */   "UNSAFE_getPathContributingMatches": () => (/* binding */ getPathContributingMatches),
 /* harmony export */   "createBrowserHistory": () => (/* binding */ createBrowserHistory),
@@ -22,6 +25,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "createMemoryHistory": () => (/* binding */ createMemoryHistory),
 /* harmony export */   "createPath": () => (/* binding */ createPath),
 /* harmony export */   "createRouter": () => (/* binding */ createRouter),
+/* harmony export */   "createStaticHandler": () => (/* binding */ createStaticHandler),
 /* harmony export */   "defer": () => (/* binding */ defer),
 /* harmony export */   "generatePath": () => (/* binding */ generatePath),
 /* harmony export */   "getStaticContextFromError": () => (/* binding */ getStaticContextFromError),
@@ -38,11 +42,10 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "resolvePath": () => (/* binding */ resolvePath),
 /* harmony export */   "resolveTo": () => (/* binding */ resolveTo),
 /* harmony export */   "stripBasename": () => (/* binding */ stripBasename),
-/* harmony export */   "unstable_createStaticHandler": () => (/* binding */ unstable_createStaticHandler),
 /* harmony export */   "warning": () => (/* binding */ warning)
 /* harmony export */ });
 /**
- * @remix-run/router v1.0.4
+ * @remix-run/router v1.3.2
  *
  * Copyright (c) Remix Software Inc.
  *
@@ -142,6 +145,10 @@ function createMemoryHistory(options) {
     return location;
   }
 
+  function createHref(to) {
+    return typeof to === "string" ? to : createPath(to);
+  }
+
   let history = {
     get index() {
       return index;
@@ -155,8 +162,10 @@ function createMemoryHistory(options) {
       return getCurrentLocation();
     },
 
-    createHref(to) {
-      return typeof to === "string" ? to : createPath(to);
+    createHref,
+
+    createURL(to) {
+      return new URL(createHref(to), "http://localhost");
     },
 
     encodeLocation(to) {
@@ -177,7 +186,8 @@ function createMemoryHistory(options) {
       if (v5Compat && listener) {
         listener({
           action,
-          location: nextLocation
+          location: nextLocation,
+          delta: 1
         });
       }
     },
@@ -190,19 +200,23 @@ function createMemoryHistory(options) {
       if (v5Compat && listener) {
         listener({
           action,
-          location: nextLocation
+          location: nextLocation,
+          delta: 0
         });
       }
     },
 
     go(delta) {
       action = Action.Pop;
-      index = clampIndex(index + delta);
+      let nextIndex = clampIndex(index + delta);
+      let nextLocation = entries[nextIndex];
+      index = nextIndex;
 
       if (listener) {
         listener({
           action,
-          location: getCurrentLocation()
+          location: nextLocation,
+          delta
         });
       }
     },
@@ -296,10 +310,12 @@ function createHashHistory(options) {
   }
 
   return getUrlBasedHistory(createHashLocation, createHashHref, validateHashLocation, options);
-} //#endregion
-////////////////////////////////////////////////////////////////////////////////
-//#region UTILS
-////////////////////////////////////////////////////////////////////////////////
+}
+function invariant(value, message) {
+  if (value === false || value === null || typeof value === "undefined") {
+    throw new Error(message);
+  }
+}
 
 function warning$1(cond, message) {
   if (!cond) {
@@ -325,10 +341,11 @@ function createKey() {
  */
 
 
-function getHistoryState(location) {
+function getHistoryState(location, index) {
   return {
     usr: location.state,
-    key: location.key
+    key: location.key,
+    idx: index
   };
 }
 /**
@@ -399,14 +416,6 @@ function parsePath(path) {
 
   return parsedPath;
 }
-function createURL(location) {
-  // window.location.origin is "null" (the literal string value) in Firefox
-  // under certain conditions, notably when serving from a local HTML file
-  // See https://bugzilla.mozilla.org/show_bug.cgi?id=878297
-  let base = typeof window !== "undefined" && typeof window.location !== "undefined" && window.location.origin !== "null" ? window.location.origin : "unknown://unknown";
-  let href = typeof location === "string" ? location : createPath(location);
-  return new URL(href, base);
-}
 
 function getUrlBasedHistory(getLocation, createHref, validateLocation, options) {
   if (options === void 0) {
@@ -420,14 +429,35 @@ function getUrlBasedHistory(getLocation, createHref, validateLocation, options) 
   let globalHistory = window.history;
   let action = Action.Pop;
   let listener = null;
+  let index = getIndex(); // Index should only be null when we initialize. If not, it's because the
+  // user called history.pushState or history.replaceState directly, in which
+  // case we should log a warning as it will result in bugs.
+
+  if (index == null) {
+    index = 0;
+    globalHistory.replaceState(_extends({}, globalHistory.state, {
+      idx: index
+    }), "");
+  }
+
+  function getIndex() {
+    let state = globalHistory.state || {
+      idx: null
+    };
+    return state.idx;
+  }
 
   function handlePop() {
     action = Action.Pop;
+    let nextIndex = getIndex();
+    let delta = nextIndex == null ? null : nextIndex - index;
+    index = nextIndex;
 
     if (listener) {
       listener({
         action,
-        location: history.location
+        location: history.location,
+        delta
       });
     }
   }
@@ -436,7 +466,8 @@ function getUrlBasedHistory(getLocation, createHref, validateLocation, options) 
     action = Action.Push;
     let location = createLocation(history.location, to, state);
     if (validateLocation) validateLocation(location, to);
-    let historyState = getHistoryState(location);
+    index = getIndex() + 1;
+    let historyState = getHistoryState(location, index);
     let url = history.createHref(location); // try...catch because iOS limits us to 100 pushState calls :/
 
     try {
@@ -450,7 +481,8 @@ function getUrlBasedHistory(getLocation, createHref, validateLocation, options) 
     if (v5Compat && listener) {
       listener({
         action,
-        location: history.location
+        location: history.location,
+        delta: 1
       });
     }
   }
@@ -459,16 +491,28 @@ function getUrlBasedHistory(getLocation, createHref, validateLocation, options) 
     action = Action.Replace;
     let location = createLocation(history.location, to, state);
     if (validateLocation) validateLocation(location, to);
-    let historyState = getHistoryState(location);
+    index = getIndex();
+    let historyState = getHistoryState(location, index);
     let url = history.createHref(location);
     globalHistory.replaceState(historyState, "", url);
 
     if (v5Compat && listener) {
       listener({
         action,
-        location: history.location
+        location: history.location,
+        delta: 0
       });
     }
+  }
+
+  function createURL(to) {
+    // window.location.origin is "null" (the literal string value) in Firefox
+    // under certain conditions, notably when serving from a local HTML file
+    // See https://bugzilla.mozilla.org/show_bug.cgi?id=878297
+    let base = window.location.origin !== "null" ? window.location.origin : window.location.href;
+    let href = typeof to === "string" ? to : createPath(to);
+    invariant(base, "No window.location.(origin|href) available to create URL for href: " + href);
+    return new URL(href, base);
   }
 
   let history = {
@@ -497,9 +541,11 @@ function getUrlBasedHistory(getLocation, createHref, validateLocation, options) 
       return createHref(window, to);
     },
 
+    createURL,
+
     encodeLocation(to) {
       // Encode a Location the same way window.location would
-      let url = createURL(typeof to === "string" ? to : createPath(to));
+      let url = createURL(to);
       return {
         pathname: url.pathname,
         search: url.search,
@@ -568,7 +614,7 @@ function convertRoutesToDataRoutes(routes, parentPath, allIds) {
 /**
  * Matches the given routes to a location and returns the match data.
  *
- * @see https://reactrouter.com/docs/en/v6/utils/match-routes
+ * @see https://reactrouter.com/utils/match-routes
  */
 
 function matchRoutes(routes, locationArg, basename) {
@@ -613,9 +659,9 @@ function flattenRoutes(routes, branches, parentsMeta, parentPath) {
     parentPath = "";
   }
 
-  routes.forEach((route, index) => {
+  let flattenRoute = (route, index, relativePath) => {
     let meta = {
-      relativePath: route.path || "",
+      relativePath: relativePath === undefined ? route.path || "" : relativePath,
       caseSensitive: route.caseSensitive === true,
       childrenIndex: index,
       route
@@ -649,8 +695,70 @@ function flattenRoutes(routes, branches, parentsMeta, parentPath) {
       score: computeScore(path, route.index),
       routesMeta
     });
+  };
+
+  routes.forEach((route, index) => {
+    var _route$path;
+
+    // coarse-grain check for optional params
+    if (route.path === "" || !((_route$path = route.path) != null && _route$path.includes("?"))) {
+      flattenRoute(route, index);
+    } else {
+      for (let exploded of explodeOptionalSegments(route.path)) {
+        flattenRoute(route, index, exploded);
+      }
+    }
   });
   return branches;
+}
+/**
+ * Computes all combinations of optional path segments for a given path,
+ * excluding combinations that are ambiguous and of lower priority.
+ *
+ * For example, `/one/:two?/three/:four?/:five?` explodes to:
+ * - `/one/three`
+ * - `/one/:two/three`
+ * - `/one/three/:four`
+ * - `/one/three/:five`
+ * - `/one/:two/three/:four`
+ * - `/one/:two/three/:five`
+ * - `/one/three/:four/:five`
+ * - `/one/:two/three/:four/:five`
+ */
+
+
+function explodeOptionalSegments(path) {
+  let segments = path.split("/");
+  if (segments.length === 0) return [];
+  let [first, ...rest] = segments; // Optional path segments are denoted by a trailing `?`
+
+  let isOptional = first.endsWith("?"); // Compute the corresponding required segment: `foo?` -> `foo`
+
+  let required = first.replace(/\?$/, "");
+
+  if (rest.length === 0) {
+    // Intepret empty string as omitting an optional segment
+    // `["one", "", "three"]` corresponds to omitting `:two` from `/one/:two?/three` -> `/one/three`
+    return isOptional ? [required, ""] : [required];
+  }
+
+  let restExploded = explodeOptionalSegments(rest.join("/"));
+  let result = []; // All child paths with the prefix.  Do this for all children before the
+  // optional version for all children so we get consistent ordering where the
+  // parent optional aspect is preferred as required.  Otherwise, we can get
+  // child sections interspersed where deeper optional segments are higher than
+  // parent optional segments, where for example, /:two would explodes _earlier_
+  // then /:one.  By always including the parent as required _for all children_
+  // first, we avoid this issue
+
+  result.push(...restExploded.map(subpath => subpath === "" ? required : [required, subpath].join("/"))); // Then if this is an optional value, add all child versions without
+
+  if (isOptional) {
+    result.push(...restExploded);
+  } // for absolute paths, ensure `/` instead of empty segment
+
+
+  return result.map(exploded => path.startsWith("/") && exploded === "" ? "/" : exploded);
 }
 
 function rankRouteBranches(branches) {
@@ -731,19 +839,48 @@ function matchRouteBranch(branch, pathname) {
 /**
  * Returns a path with params interpolated.
  *
- * @see https://reactrouter.com/docs/en/v6/utils/generate-path
+ * @see https://reactrouter.com/utils/generate-path
  */
 
 
-function generatePath(path, params) {
+function generatePath(originalPath, params) {
   if (params === void 0) {
     params = {};
   }
 
-  return path.replace(/:(\w+)/g, (_, key) => {
-    invariant(params[key] != null, "Missing \":" + key + "\" param");
-    return params[key];
-  }).replace(/(\/?)\*/, (_, prefix, __, str) => {
+  let path = originalPath;
+
+  if (path.endsWith("*") && path !== "*" && !path.endsWith("/*")) {
+    warning(false, "Route path \"" + path + "\" will be treated as if it were " + ("\"" + path.replace(/\*$/, "/*") + "\" because the `*` character must ") + "always follow a `/` in the pattern. To get rid of this warning, " + ("please change the route path to \"" + path.replace(/\*$/, "/*") + "\"."));
+    path = path.replace(/\*$/, "/*");
+  }
+
+  return path.replace(/^:(\w+)(\??)/g, (_, key, optional) => {
+    let param = params[key];
+
+    if (optional === "?") {
+      return param == null ? "" : param;
+    }
+
+    if (param == null) {
+      invariant(false, "Missing \":" + key + "\" param");
+    }
+
+    return param;
+  }).replace(/\/:(\w+)(\??)/g, (_, key, optional) => {
+    let param = params[key];
+
+    if (optional === "?") {
+      return param == null ? "" : "/" + param;
+    }
+
+    if (param == null) {
+      invariant(false, "Missing \":" + key + "\" param");
+    }
+
+    return "/" + param;
+  }) // Remove any optional markers from optional static segments
+  .replace(/\?/g, "").replace(/(\/?)\*/, (_, prefix, __, str) => {
     const star = "*";
 
     if (params[star] == null) {
@@ -760,7 +897,7 @@ function generatePath(path, params) {
  * Performs pattern matching on a URL pathname and returns information about
  * the match.
  *
- * @see https://reactrouter.com/docs/en/v6/utils/match-path
+ * @see https://reactrouter.com/utils/match-path
  */
 
 function matchPath(pattern, pathname) {
@@ -811,9 +948,9 @@ function compilePath(path, caseSensitive, end) {
   let regexpSource = "^" + path.replace(/\/*\*?$/, "") // Ignore trailing / and /*, we'll handle it below
   .replace(/^\/*/, "/") // Make sure it has a leading /
   .replace(/[\\.*+^$?{}|()[\]]/g, "\\$&") // Escape special regex chars
-  .replace(/:(\w+)/g, (_, paramName) => {
+  .replace(/\/:(\w+)/g, (_, paramName) => {
     paramNames.push(paramName);
-    return "([^\\/]+)";
+    return "/([^\\/]+)";
   });
 
   if (path.endsWith("*")) {
@@ -879,11 +1016,6 @@ function stripBasename(pathname, basename) {
 
   return pathname.slice(startIndex) || "/";
 }
-function invariant(value, message) {
-  if (value === false || value === null || typeof value === "undefined") {
-    throw new Error(message);
-  }
-}
 /**
  * @private
  */
@@ -894,7 +1026,7 @@ function warning(cond, message) {
     if (typeof console !== "undefined") console.warn(message);
 
     try {
-      // Welcome to debugging React Router!
+      // Welcome to debugging @remix-run/router!
       //
       // This error is thrown as a convenience so you can more easily
       // find the source for a warning that appears in the console by
@@ -906,7 +1038,7 @@ function warning(cond, message) {
 /**
  * Returns a resolved path object relative to the given pathname.
  *
- * @see https://reactrouter.com/docs/en/v6/utils/resolve-path
+ * @see https://reactrouter.com/utils/resolve-path
  */
 
 function resolvePath(to, fromPathname) {
@@ -1092,9 +1224,10 @@ const json = function json(data, init) {
 };
 class AbortedDeferredError extends Error {}
 class DeferredData {
-  constructor(data) {
-    this.pendingKeys = new Set();
-    this.subscriber = undefined;
+  constructor(data, responseInit) {
+    this.pendingKeysSet = new Set();
+    this.subscribers = new Set();
+    this.deferredKeys = [];
     invariant(data && typeof data === "object" && !Array.isArray(data), "defer() only accepts plain objects"); // Set up an AbortController + Promise we can race against to exit early
     // cancellation
 
@@ -1113,6 +1246,13 @@ class DeferredData {
         [key]: this.trackPromise(key, value)
       });
     }, {});
+
+    if (this.done) {
+      // All incoming values were resolved
+      this.unlistenAbortSignal();
+    }
+
+    this.init = responseInit;
   }
 
   trackPromise(key, value) {
@@ -1120,7 +1260,8 @@ class DeferredData {
       return value;
     }
 
-    this.pendingKeys.add(key); // We store a little wrapper promise that will be extended with
+    this.deferredKeys.push(key);
+    this.pendingKeysSet.add(key); // We store a little wrapper promise that will be extended with
     // _data/_error props upon resolve/reject
 
     let promise = Promise.race([value, this.abortPromise]).then(data => this.onSettle(promise, key, null, data), error => this.onSettle(promise, key, error)); // Register rejection listeners to avoid uncaught promise rejections on
@@ -1142,39 +1283,41 @@ class DeferredData {
       return Promise.reject(error);
     }
 
-    this.pendingKeys.delete(key);
+    this.pendingKeysSet.delete(key);
 
     if (this.done) {
       // Nothing left to abort!
       this.unlistenAbortSignal();
     }
 
-    const subscriber = this.subscriber;
-
     if (error) {
       Object.defineProperty(promise, "_error", {
         get: () => error
       });
-      subscriber && subscriber(false);
+      this.emit(false, key);
       return Promise.reject(error);
     }
 
     Object.defineProperty(promise, "_data", {
       get: () => data
     });
-    subscriber && subscriber(false);
+    this.emit(false, key);
     return data;
   }
 
+  emit(aborted, settledKey) {
+    this.subscribers.forEach(subscriber => subscriber(aborted, settledKey));
+  }
+
   subscribe(fn) {
-    this.subscriber = fn;
+    this.subscribers.add(fn);
+    return () => this.subscribers.delete(fn);
   }
 
   cancel() {
     this.controller.abort();
-    this.pendingKeys.forEach((v, k) => this.pendingKeys.delete(k));
-    let subscriber = this.subscriber;
-    subscriber && subscriber(true);
+    this.pendingKeysSet.forEach((v, k) => this.pendingKeysSet.delete(k));
+    this.emit(true);
   }
 
   async resolveData(signal) {
@@ -1199,7 +1342,7 @@ class DeferredData {
   }
 
   get done() {
-    return this.pendingKeys.size === 0;
+    return this.pendingKeysSet.size === 0;
   }
 
   get unwrappedData() {
@@ -1210,6 +1353,10 @@ class DeferredData {
         [key]: unwrapTrackedPromise(value)
       });
     }, {});
+  }
+
+  get pendingKeys() {
+    return Array.from(this.pendingKeysSet);
   }
 
 }
@@ -1230,9 +1377,16 @@ function unwrapTrackedPromise(value) {
   return value._data;
 }
 
-function defer(data) {
-  return new DeferredData(data);
-}
+const defer = function defer(data, init) {
+  if (init === void 0) {
+    init = {};
+  }
+
+  let responseInit = typeof init === "number" ? {
+    status: init
+  } : init;
+  return new DeferredData(data, responseInit);
+};
 /**
  * A redirect response. Sets the status code and the `Location` header.
  * Defaults to "302 Found".
@@ -1285,16 +1439,16 @@ class ErrorResponse {
 }
 /**
  * Check if the given error is an ErrorResponse generated from a 4xx/5xx
- * Response throw from an action/loader
+ * Response thrown from an action/loader
  */
 
-function isRouteErrorResponse(e) {
-  return e instanceof ErrorResponse;
+function isRouteErrorResponse(error) {
+  return error != null && typeof error.status === "number" && typeof error.statusText === "string" && typeof error.internal === "boolean" && "data" in error;
 }
 
-const validActionMethodsArr = ["post", "put", "patch", "delete"];
-const validActionMethods = new Set(validActionMethodsArr);
-const validRequestMethodsArr = ["get", ...validActionMethodsArr];
+const validMutationMethodsArr = ["post", "put", "patch", "delete"];
+const validMutationMethods = new Set(validMutationMethodsArr);
+const validRequestMethodsArr = ["get", ...validMutationMethodsArr];
 const validRequestMethods = new Set(validRequestMethodsArr);
 const redirectStatusCodes = new Set([301, 302, 303, 307, 308]);
 const redirectPreserveMethodStatusCodes = new Set([307, 308]);
@@ -1314,6 +1468,13 @@ const IDLE_FETCHER = {
   formEncType: undefined,
   formData: undefined
 };
+const IDLE_BLOCKER = {
+  state: "unblocked",
+  proceed: undefined,
+  reset: undefined,
+  location: undefined
+};
+const ABSOLUTE_URL_REGEX = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i;
 const isBrowser = typeof window !== "undefined" && typeof window.document !== "undefined" && typeof window.document.createElement !== "undefined";
 const isServer = !isBrowser; //#endregion
 ////////////////////////////////////////////////////////////////////////////////
@@ -1340,8 +1501,10 @@ function createRouter(init) {
   // we don't get the saved positions from <ScrollRestoration /> until _after_
   // the initial render, we need to manually trigger a separate updateState to
   // send along the restoreScrollPosition
+  // Set to true if we have `hydrationData` since we assume we were SSR'd and that
+  // SSR did the initial scroll restoration.
 
-  let initialScrollRestored = false;
+  let initialScrollRestored = init.hydrationData != null;
   let initialMatches = matchRoutes(dataRoutes, init.history.location, init.basename);
   let initialErrors = null;
 
@@ -1369,13 +1532,15 @@ function createRouter(init) {
     matches: initialMatches,
     initialized,
     navigation: IDLE_NAVIGATION,
-    restoreScrollPosition: null,
+    // Don't restore on initial updateState() if we were SSR'd
+    restoreScrollPosition: init.hydrationData != null ? false : null,
     preventScrollReset: false,
     revalidation: "idle",
     loaderData: init.hydrationData && init.hydrationData.loaderData || {},
     actionData: init.hydrationData && init.hydrationData.actionData || null,
     errors: init.hydrationData && init.hydrationData.errors || initialErrors,
-    fetchers: new Map()
+    fetchers: new Map(),
+    blockers: new Map()
   }; // -- Stateful internal variables to manage navigations --
   // Current navigation in progress (to be committed in completeNavigation)
 
@@ -1417,7 +1582,13 @@ function createRouter(init) {
   // promise resolves we update loaderData.  If a new navigation starts we
   // cancel active deferreds for eliminated routes.
 
-  let activeDeferreds = new Map(); // Initialize the router, all side effects should be kicked off from here.
+  let activeDeferreds = new Map(); // Store blocker functions in a separate Map outside of router state since
+  // we don't need to update UI state if they change
+
+  let blockerFunctions = new Map(); // Flag to ignore the next history update, so we can revert the URL change on
+  // a POP navigation that was blocked by the user without touching router state
+
+  let ignoreNextHistoryUpdate = false; // Initialize the router, all side effects should be kicked off from here.
   // Implemented as a Fluent API for ease of:
   //   let router = createRouter(init).initialize();
 
@@ -1427,8 +1598,55 @@ function createRouter(init) {
     unlistenHistory = init.history.listen(_ref => {
       let {
         action: historyAction,
-        location
+        location,
+        delta
       } = _ref;
+
+      // Ignore this event if it was just us resetting the URL from a
+      // blocked POP navigation
+      if (ignoreNextHistoryUpdate) {
+        ignoreNextHistoryUpdate = false;
+        return;
+      }
+
+      warning(blockerFunctions.size === 0 || delta != null, "You are trying to use a blocker on a POP navigation to a location " + "that was not created by @remix-run/router. This will fail silently in " + "production. This can happen if you are navigating outside the router " + "via `window.history.pushState`/`window.location.hash` instead of using " + "router navigation APIs.  This can also happen if you are using " + "createHashRouter and the user manually changes the URL.");
+      let blockerKey = shouldBlockNavigation({
+        currentLocation: state.location,
+        nextLocation: location,
+        historyAction
+      });
+
+      if (blockerKey && delta != null) {
+        // Restore the URL to match the current UI, but don't update router state
+        ignoreNextHistoryUpdate = true;
+        init.history.go(delta * -1); // Put the blocker into a blocked state
+
+        updateBlocker(blockerKey, {
+          state: "blocked",
+          location,
+
+          proceed() {
+            updateBlocker(blockerKey, {
+              state: "proceeding",
+              proceed: undefined,
+              reset: undefined,
+              location
+            }); // Re-do the same POP navigation we just blocked
+
+            init.history.go(delta);
+          },
+
+          reset() {
+            deleteBlocker(blockerKey);
+            updateState({
+              blockers: new Map(router.state.blockers)
+            });
+          }
+
+        });
+        return;
+      }
+
       return startNavigation(historyAction, location);
     }); // Kick off initial data load if needed.  Use Pop to avoid modifying history
 
@@ -1448,6 +1666,7 @@ function createRouter(init) {
     subscribers.clear();
     pendingNavigationController && pendingNavigationController.abort();
     state.fetchers.forEach((_, key) => deleteFetcher(key));
+    state.blockers.forEach((_, key) => deleteBlocker(key));
   } // Subscribe to state updates for the router
 
 
@@ -1468,32 +1687,53 @@ function createRouter(init) {
 
 
   function completeNavigation(location, newState) {
-    var _state$navigation$for;
+    var _location$state, _location$state2;
 
     // Deduce if we're in a loading/actionReload state:
     // - We have committed actionData in the store
-    // - The current navigation was a submission
+    // - The current navigation was a mutation submission
     // - We're past the submitting state and into the loading state
-    // - The location we've finished loading is different from the submission
-    //   location, indicating we redirected from the action (avoids false
-    //   positives for loading/submissionRedirect when actionData returned
-    //   on a prior submission)
-    let isActionReload = state.actionData != null && state.navigation.formMethod != null && state.navigation.state === "loading" && ((_state$navigation$for = state.navigation.formAction) == null ? void 0 : _state$navigation$for.split("?")[0]) === location.pathname; // Always preserve any existing loaderData from re-used routes
+    // - The location being loaded is not the result of a redirect
+    let isActionReload = state.actionData != null && state.navigation.formMethod != null && isMutationMethod(state.navigation.formMethod) && state.navigation.state === "loading" && ((_location$state = location.state) == null ? void 0 : _location$state._isRedirect) !== true;
+    let actionData;
 
-    let newLoaderData = newState.loaderData ? {
-      loaderData: mergeLoaderData(state.loaderData, newState.loaderData, newState.matches || [])
-    } : {};
-    updateState(_extends({}, isActionReload ? {} : {
-      actionData: null
-    }, newState, newLoaderData, {
+    if (newState.actionData) {
+      if (Object.keys(newState.actionData).length > 0) {
+        actionData = newState.actionData;
+      } else {
+        // Empty actionData -> clear prior actionData due to an action error
+        actionData = null;
+      }
+    } else if (isActionReload) {
+      // Keep the current data if we're wrapping up the action reload
+      actionData = state.actionData;
+    } else {
+      // Clear actionData on any other completed navigations
+      actionData = null;
+    } // Always preserve any existing loaderData from re-used routes
+
+
+    let loaderData = newState.loaderData ? mergeLoaderData(state.loaderData, newState.loaderData, newState.matches || [], newState.errors) : state.loaderData; // On a successful navigation we can assume we got through all blockers
+    // so we can start fresh
+
+    for (let [key] of blockerFunctions) {
+      deleteBlocker(key);
+    } // Always respect the user flag.  Otherwise don't reset on mutation
+    // submission navigations unless they redirect
+
+
+    let preventScrollReset = pendingPreventScrollReset === true || state.navigation.formMethod != null && isMutationMethod(state.navigation.formMethod) && ((_location$state2 = location.state) == null ? void 0 : _location$state2._isRedirect) !== true;
+    updateState(_extends({}, newState, {
+      actionData,
+      loaderData,
       historyAction: pendingAction,
       location,
       initialized: true,
       navigation: IDLE_NAVIGATION,
       revalidation: "idle",
-      // Don't restore on submission navigations
-      restoreScrollPosition: state.navigation.formData ? false : getSavedScrollPosition(location, newState.matches || state.matches),
-      preventScrollReset: pendingPreventScrollReset
+      restoreScrollPosition: getSavedScrollPosition(location, newState.matches || state.matches),
+      preventScrollReset,
+      blockers: new Map(state.blockers)
     }));
 
     if (isUninterruptedRevalidation) ; else if (pendingAction === Action.Pop) ; else if (pendingAction === Action.Push) {
@@ -1524,16 +1764,63 @@ function createRouter(init) {
       submission,
       error
     } = normalizeNavigateOptions(to, opts);
-    let location = createLocation(state.location, path, opts && opts.state); // When using navigate as a PUSH/REPLACE we aren't reading an already-encoded
+    let currentLocation = state.location;
+    let nextLocation = createLocation(state.location, path, opts && opts.state); // When using navigate as a PUSH/REPLACE we aren't reading an already-encoded
     // URL from window.location, so we need to encode it here so the behavior
     // remains the same as POP and non-data-router usages.  new URL() does all
     // the same encoding we'd get from a history.pushState/window.location read
     // without having to touch history
 
-    location = _extends({}, location, init.history.encodeLocation(location));
-    let historyAction = (opts && opts.replace) === true || submission != null ? Action.Replace : Action.Push;
+    nextLocation = _extends({}, nextLocation, init.history.encodeLocation(nextLocation));
+    let userReplace = opts && opts.replace != null ? opts.replace : undefined;
+    let historyAction = Action.Push;
+
+    if (userReplace === true) {
+      historyAction = Action.Replace;
+    } else if (userReplace === false) ; else if (submission != null && isMutationMethod(submission.formMethod) && submission.formAction === state.location.pathname + state.location.search) {
+      // By default on submissions to the current location we REPLACE so that
+      // users don't have to double-click the back button to get to the prior
+      // location.  If the user redirects to a different location from the
+      // action/loader this will be ignored and the redirect will be a PUSH
+      historyAction = Action.Replace;
+    }
+
     let preventScrollReset = opts && "preventScrollReset" in opts ? opts.preventScrollReset === true : undefined;
-    return await startNavigation(historyAction, location, {
+    let blockerKey = shouldBlockNavigation({
+      currentLocation,
+      nextLocation,
+      historyAction
+    });
+
+    if (blockerKey) {
+      // Put the blocker into a blocked state
+      updateBlocker(blockerKey, {
+        state: "blocked",
+        location: nextLocation,
+
+        proceed() {
+          updateBlocker(blockerKey, {
+            state: "proceeding",
+            proceed: undefined,
+            reset: undefined,
+            location: nextLocation
+          }); // Send the same navigation through
+
+          navigate(to, opts);
+        },
+
+        reset() {
+          deleteBlocker(blockerKey);
+          updateState({
+            blockers: new Map(state.blockers)
+          });
+        }
+
+      });
+      return;
+    }
+
+    return await startNavigation(historyAction, nextLocation, {
       submission,
       // Send through the formData serialization error if we have one so we can
       // render at the right error boundary after we match routes
@@ -1611,10 +1898,12 @@ function createRouter(init) {
         }
       });
       return;
-    } // Short circuit if it's only a hash change
+    } // Short circuit if it's only a hash change and not a mutation submission
+    // For example, on /page#hash and submit a <Form method="post"> which will
+    // default to a navigation to /page
 
 
-    if (isHashChangeOnly(state.location, location)) {
+    if (isHashChangeOnly(state.location, location) && !(opts && opts.submission && isMutationMethod(opts.submission.formMethod))) {
       completeNavigation(location, {
         matches
       });
@@ -1623,7 +1912,7 @@ function createRouter(init) {
 
 
     pendingNavigationController = new AbortController();
-    let request = createRequest(location, pendingNavigationController.signal, opts && opts.submission);
+    let request = createClientSideRequest(init.history, location, pendingNavigationController.signal, opts && opts.submission);
     let pendingActionData;
     let pendingError;
 
@@ -1635,7 +1924,7 @@ function createRouter(init) {
       pendingError = {
         [findNearestBoundary(matches).route.id]: opts.pendingError
       };
-    } else if (opts && opts.submission) {
+    } else if (opts && opts.submission && isMutationMethod(opts.submission.formMethod)) {
       // Call action if we received an action submission
       let actionOutput = await handleAction(request, location, opts.submission, matches, {
         replace: opts.replace
@@ -1653,7 +1942,11 @@ function createRouter(init) {
         location
       }, opts.submission);
 
-      loadingNavigation = navigation;
+      loadingNavigation = navigation; // Create a GET request for the loaders
+
+      request = new Request(request.url, {
+        signal: request.signal
+      });
     } // Call loaders
 
 
@@ -1671,11 +1964,14 @@ function createRouter(init) {
 
 
     pendingNavigationController = null;
-    completeNavigation(location, {
-      matches,
+    completeNavigation(location, _extends({
+      matches
+    }, pendingActionData ? {
+      actionData: pendingActionData
+    } : {}, {
       loaderData,
       errors
-    });
+    }));
   } // Call the action matched by the leaf route for this navigation and handle
   // redirects/errors
 
@@ -1715,7 +2011,21 @@ function createRouter(init) {
     }
 
     if (isRedirectResult(result)) {
-      await startRedirectNavigation(state, result, opts && opts.replace === true);
+      let replace;
+
+      if (opts && opts.replace != null) {
+        replace = opts.replace;
+      } else {
+        // If the user didn't explicity indicate replace behavior, replace if
+        // we redirected to the exact same location we're currently at to avoid
+        // double back-buttons
+        replace = result.location === state.location.pathname + state.location.search;
+      }
+
+      await startRedirectNavigation(state, result, {
+        submission,
+        replace
+      });
       return {
         shortCircuited: true
       };
@@ -1734,6 +2044,8 @@ function createRouter(init) {
       }
 
       return {
+        // Send back an empty object we can use to clear out any prior actionData
+        pendingActionData: {},
         pendingActionError: {
           [boundaryMatch.route.id]: result.error
         }
@@ -1741,7 +2053,9 @@ function createRouter(init) {
     }
 
     if (isDeferredResult(result)) {
-      throw new Error("defer() is not supported in actions");
+      throw getInternalRouterError(400, {
+        type: "defer-action"
+      });
     }
 
     return {
@@ -1758,31 +2072,41 @@ function createRouter(init) {
     let loadingNavigation = overrideNavigation;
 
     if (!loadingNavigation) {
-      let navigation = {
+      let navigation = _extends({
         state: "loading",
         location,
         formMethod: undefined,
         formAction: undefined,
         formEncType: undefined,
         formData: undefined
-      };
-      loadingNavigation = navigation;
-    }
+      }, submission);
 
-    let [matchesToLoad, revalidatingFetchers] = getMatchesToLoad(state, matches, submission, location, isRevalidationRequired, cancelledDeferredRoutes, cancelledFetcherLoads, pendingActionData, pendingError, fetchLoadMatches); // Cancel pending deferreds for no-longer-matched routes or routes we're
+      loadingNavigation = navigation;
+    } // If this was a redirect from an action we don't have a "submission" but
+    // we have it on the loading navigation so use that if available
+
+
+    let activeSubmission = submission ? submission : loadingNavigation.formMethod && loadingNavigation.formAction && loadingNavigation.formData && loadingNavigation.formEncType ? {
+      formMethod: loadingNavigation.formMethod,
+      formAction: loadingNavigation.formAction,
+      formData: loadingNavigation.formData,
+      formEncType: loadingNavigation.formEncType
+    } : undefined;
+    let [matchesToLoad, revalidatingFetchers] = getMatchesToLoad(init.history, state, matches, activeSubmission, location, isRevalidationRequired, cancelledDeferredRoutes, cancelledFetcherLoads, pendingActionData, pendingError, fetchLoadMatches); // Cancel pending deferreds for no-longer-matched routes or routes we're
     // about to reload.  Note that if this is an action reload we would have
     // already cancelled all pending deferreds so this would be a no-op
 
     cancelActiveDeferreds(routeId => !(matches && matches.some(m => m.route.id === routeId)) || matchesToLoad && matchesToLoad.some(m => m.route.id === routeId)); // Short circuit if we have no loaders to run
 
     if (matchesToLoad.length === 0 && revalidatingFetchers.length === 0) {
-      completeNavigation(location, {
+      completeNavigation(location, _extends({
         matches,
-        loaderData: mergeLoaderData(state.loaderData, {}, matches),
+        loaderData: {},
         // Commit pending error if we're short circuiting
-        errors: pendingError || null,
-        actionData: pendingActionData || null
-      });
+        errors: pendingError || null
+      }, pendingActionData ? {
+        actionData: pendingActionData
+      } : {}));
       return {
         shortCircuited: true
       };
@@ -1793,32 +2117,33 @@ function createRouter(init) {
 
 
     if (!isUninterruptedRevalidation) {
-      revalidatingFetchers.forEach(_ref2 => {
-        let [key] = _ref2;
-        let fetcher = state.fetchers.get(key);
+      revalidatingFetchers.forEach(rf => {
+        let fetcher = state.fetchers.get(rf.key);
         let revalidatingFetcher = {
           state: "loading",
           data: fetcher && fetcher.data,
           formMethod: undefined,
           formAction: undefined,
           formEncType: undefined,
-          formData: undefined
+          formData: undefined,
+          " _hasFetcherDoneAnything ": true
         };
-        state.fetchers.set(key, revalidatingFetcher);
+        state.fetchers.set(rf.key, revalidatingFetcher);
       });
+      let actionData = pendingActionData || state.actionData;
       updateState(_extends({
-        navigation: loadingNavigation,
-        actionData: pendingActionData || state.actionData || null
-      }, revalidatingFetchers.length > 0 ? {
+        navigation: loadingNavigation
+      }, actionData ? Object.keys(actionData).length === 0 ? {
+        actionData: null
+      } : {
+        actionData
+      } : {}, revalidatingFetchers.length > 0 ? {
         fetchers: new Map(state.fetchers)
       } : {}));
     }
 
     pendingNavigationLoadId = ++incrementingLoadId;
-    revalidatingFetchers.forEach(_ref3 => {
-      let [key] = _ref3;
-      return fetchControllers.set(key, pendingNavigationController);
-    });
+    revalidatingFetchers.forEach(rf => fetchControllers.set(rf.key, pendingNavigationController));
     let {
       results,
       loaderResults,
@@ -1834,15 +2159,14 @@ function createRouter(init) {
     // reassigned to new controllers for the next navigation
 
 
-    revalidatingFetchers.forEach(_ref4 => {
-      let [key] = _ref4;
-      return fetchControllers.delete(key);
-    }); // If any loaders returned a redirect Response, start a new REPLACE navigation
+    revalidatingFetchers.forEach(rf => fetchControllers.delete(rf.key)); // If any loaders returned a redirect Response, start a new REPLACE navigation
 
     let redirect = findRedirect(results);
 
     if (redirect) {
-      await startRedirectNavigation(state, redirect, replace);
+      await startRedirectNavigation(state, redirect, {
+        replace
+      });
       return {
         shortCircuited: true
       };
@@ -1899,16 +2223,22 @@ function createRouter(init) {
       submission
     } = normalizeNavigateOptions(href, opts, true);
     let match = getTargetMatch(matches, path);
+    pendingPreventScrollReset = (opts && opts.preventScrollReset) === true;
 
-    if (submission) {
+    if (submission && isMutationMethod(submission.formMethod)) {
       handleFetcherAction(key, routeId, path, match, matches, submission);
       return;
     } // Store off the match so we can call it's shouldRevalidate on subsequent
     // revalidations
 
 
-    fetchLoadMatches.set(key, [path, match, matches]);
-    handleFetcherLoader(key, routeId, path, match, matches);
+    fetchLoadMatches.set(key, {
+      routeId,
+      path,
+      match,
+      matches
+    });
+    handleFetcherLoader(key, routeId, path, match, matches, submission);
   } // Call the action for the matched fetcher.submit(), and then handle redirects,
   // errors, and revalidation
 
@@ -1933,7 +2263,8 @@ function createRouter(init) {
     let fetcher = _extends({
       state: "submitting"
     }, submission, {
-      data: existingFetcher && existingFetcher.data
+      data: existingFetcher && existingFetcher.data,
+      " _hasFetcherDoneAnything ": true
     });
 
     state.fetchers.set(key, fetcher);
@@ -1942,7 +2273,7 @@ function createRouter(init) {
     }); // Call the action for the fetcher
 
     let abortController = new AbortController();
-    let fetchRequest = createRequest(path, abortController.signal, submission);
+    let fetchRequest = createClientSideRequest(init.history, path, abortController.signal, submission);
     fetchControllers.set(key, abortController);
     let actionResult = await callLoaderOrAction("action", fetchRequest, match, requestMatches, router.basename);
 
@@ -1963,14 +2294,17 @@ function createRouter(init) {
       let loadingFetcher = _extends({
         state: "loading"
       }, submission, {
-        data: undefined
+        data: undefined,
+        " _hasFetcherDoneAnything ": true
       });
 
       state.fetchers.set(key, loadingFetcher);
       updateState({
         fetchers: new Map(state.fetchers)
       });
-      return startRedirectNavigation(state, actionResult);
+      return startRedirectNavigation(state, actionResult, {
+        isFetchActionRedirect: true
+      });
     } // Process any non-redirect errors thrown
 
 
@@ -1980,13 +2314,15 @@ function createRouter(init) {
     }
 
     if (isDeferredResult(actionResult)) {
-      invariant(false, "defer() is not supported in actions");
+      throw getInternalRouterError(400, {
+        type: "defer-action"
+      });
     } // Start the data load for current matches, or the next location if we're
     // in the middle of a navigation
 
 
     let nextLocation = state.navigation.location || state.location;
-    let revalidationRequest = createRequest(nextLocation, abortController.signal);
+    let revalidationRequest = createClientSideRequest(init.history, nextLocation, abortController.signal);
     let matches = state.navigation.state !== "idle" ? matchRoutes(dataRoutes, state.navigation.location, init.basename) : state.matches;
     invariant(matches, "Didn't find any matches after fetcher action");
     let loadId = ++incrementingLoadId;
@@ -1995,21 +2331,20 @@ function createRouter(init) {
     let loadFetcher = _extends({
       state: "loading",
       data: actionResult.data
-    }, submission);
+    }, submission, {
+      " _hasFetcherDoneAnything ": true
+    });
 
     state.fetchers.set(key, loadFetcher);
-    let [matchesToLoad, revalidatingFetchers] = getMatchesToLoad(state, matches, submission, nextLocation, isRevalidationRequired, cancelledDeferredRoutes, cancelledFetcherLoads, {
+    let [matchesToLoad, revalidatingFetchers] = getMatchesToLoad(init.history, state, matches, submission, nextLocation, isRevalidationRequired, cancelledDeferredRoutes, cancelledFetcherLoads, {
       [match.route.id]: actionResult.data
     }, undefined, // No need to send through errors since we short circuit above
     fetchLoadMatches); // Put all revalidating fetchers into the loading state, except for the
     // current fetcher which we want to keep in it's current loading state which
     // contains it's action submission info + action data
 
-    revalidatingFetchers.filter(_ref5 => {
-      let [staleKey] = _ref5;
-      return staleKey !== key;
-    }).forEach(_ref6 => {
-      let [staleKey] = _ref6;
+    revalidatingFetchers.filter(rf => rf.key !== key).forEach(rf => {
+      let staleKey = rf.key;
       let existingFetcher = state.fetchers.get(staleKey);
       let revalidatingFetcher = {
         state: "loading",
@@ -2017,7 +2352,8 @@ function createRouter(init) {
         formMethod: undefined,
         formAction: undefined,
         formEncType: undefined,
-        formData: undefined
+        formData: undefined,
+        " _hasFetcherDoneAnything ": true
       };
       state.fetchers.set(staleKey, revalidatingFetcher);
       fetchControllers.set(staleKey, abortController);
@@ -2037,10 +2373,7 @@ function createRouter(init) {
 
     fetchReloadIds.delete(key);
     fetchControllers.delete(key);
-    revalidatingFetchers.forEach(_ref7 => {
-      let [staleKey] = _ref7;
-      return fetchControllers.delete(staleKey);
-    });
+    revalidatingFetchers.forEach(r => fetchControllers.delete(r.key));
     let redirect = findRedirect(results);
 
     if (redirect) {
@@ -2058,7 +2391,8 @@ function createRouter(init) {
       formMethod: undefined,
       formAction: undefined,
       formEncType: undefined,
-      formData: undefined
+      formData: undefined,
+      " _hasFetcherDoneAnything ": true
     };
     state.fetchers.set(key, doneFetcher);
     let didAbortFetchLoads = abortStaleFetchLoads(loadId); // If we are currently in a navigation loading state and this fetcher is
@@ -2080,7 +2414,7 @@ function createRouter(init) {
       // manually merge here since we aren't going through completeNavigation
       updateState(_extends({
         errors,
-        loaderData: mergeLoaderData(state.loaderData, loaderData, matches)
+        loaderData: mergeLoaderData(state.loaderData, loaderData, matches, errors)
       }, didAbortFetchLoads ? {
         fetchers: new Map(state.fetchers)
       } : {}));
@@ -2089,26 +2423,29 @@ function createRouter(init) {
   } // Call the matched loader for fetcher.load(), handling redirects, errors, etc.
 
 
-  async function handleFetcherLoader(key, routeId, path, match, matches) {
+  async function handleFetcherLoader(key, routeId, path, match, matches, submission) {
     let existingFetcher = state.fetchers.get(key); // Put this fetcher into it's loading state
 
-    let loadingFetcher = {
+    let loadingFetcher = _extends({
       state: "loading",
       formMethod: undefined,
       formAction: undefined,
       formEncType: undefined,
-      formData: undefined,
-      data: existingFetcher && existingFetcher.data
-    };
+      formData: undefined
+    }, submission, {
+      data: existingFetcher && existingFetcher.data,
+      " _hasFetcherDoneAnything ": true
+    });
+
     state.fetchers.set(key, loadingFetcher);
     updateState({
       fetchers: new Map(state.fetchers)
     }); // Call the loader for this fetcher route match
 
     let abortController = new AbortController();
-    let fetchRequest = createRequest(path, abortController.signal);
+    let fetchRequest = createClientSideRequest(init.history, path, abortController.signal);
     fetchControllers.set(key, abortController);
-    let result = await callLoaderOrAction("loader", fetchRequest, match, matches, router.basename); // Deferred isn't supported or fetcher loads, await everything and treat it
+    let result = await callLoaderOrAction("loader", fetchRequest, match, matches, router.basename); // Deferred isn't supported for fetcher loads, await everything and treat it
     // as a normal load.  resolveDeferredData will return undefined if this
     // fetcher gets aborted, so we just leave result untouched and short circuit
     // below if that happens
@@ -2157,7 +2494,8 @@ function createRouter(init) {
       formMethod: undefined,
       formAction: undefined,
       formEncType: undefined,
-      formData: undefined
+      formData: undefined,
+      " _hasFetcherDoneAnything ": true
     };
     state.fetchers.set(key, doneFetcher);
     updateState({
@@ -2185,45 +2523,73 @@ function createRouter(init) {
    */
 
 
-  async function startRedirectNavigation(state, redirect, replace) {
+  async function startRedirectNavigation(state, redirect, _temp) {
+    var _window;
+
+    let {
+      submission,
+      replace,
+      isFetchActionRedirect
+    } = _temp === void 0 ? {} : _temp;
+
     if (redirect.revalidate) {
       isRevalidationRequired = true;
     }
 
-    let redirectLocation = createLocation(state.location, redirect.location);
-    invariant(redirectLocation, "Expected a location on the redirect navigation");
+    let redirectLocation = createLocation(state.location, redirect.location, // TODO: This can be removed once we get rid of useTransition in Remix v2
+    _extends({
+      _isRedirect: true
+    }, isFetchActionRedirect ? {
+      _isFetchActionRedirect: true
+    } : {}));
+    invariant(redirectLocation, "Expected a location on the redirect navigation"); // Check if this an absolute external redirect that goes to a new origin
 
-    if (redirect.external && typeof window !== "undefined" && typeof window.location !== "undefined") {
-      if (replace) {
-        window.location.replace(redirect.location);
-      } else {
-        window.location.assign(redirect.location);
+    if (ABSOLUTE_URL_REGEX.test(redirect.location) && isBrowser && typeof ((_window = window) == null ? void 0 : _window.location) !== "undefined") {
+      let newOrigin = init.history.createURL(redirect.location).origin;
+
+      if (window.location.origin !== newOrigin) {
+        if (replace) {
+          window.location.replace(redirect.location);
+        } else {
+          window.location.assign(redirect.location);
+        }
+
+        return;
       }
-
-      return;
     } // There's no need to abort on redirects, since we don't detect the
     // redirect until the action/loaders have settled
 
 
     pendingNavigationController = null;
-    let redirectHistoryAction = replace === true ? Action.Replace : Action.Push;
+    let redirectHistoryAction = replace === true ? Action.Replace : Action.Push; // Use the incoming submission if provided, fallback on the active one in
+    // state.navigation
+
     let {
       formMethod,
       formAction,
       formEncType,
       formData
-    } = state.navigation; // If this was a 307/308 submission we want to preserve the HTTP method and
-    // re-submit the POST/PUT/PATCH/DELETE as a submission navigation to the
+    } = state.navigation;
+
+    if (!submission && formMethod && formAction && formData && formEncType) {
+      submission = {
+        formMethod,
+        formAction,
+        formEncType,
+        formData
+      };
+    } // If this was a 307/308 submission we want to preserve the HTTP method and
+    // re-submit the GET/POST/PUT/PATCH/DELETE as a submission navigation to the
     // redirected location
 
-    if (redirectPreserveMethodStatusCodes.has(redirect.status) && formMethod && isSubmissionMethod(formMethod) && formEncType && formData) {
+
+    if (redirectPreserveMethodStatusCodes.has(redirect.status) && submission && isMutationMethod(submission.formMethod)) {
       await startNavigation(redirectHistoryAction, redirectLocation, {
-        submission: {
-          formMethod,
-          formAction: redirect.location,
-          formEncType,
-          formData
-        }
+        submission: _extends({}, submission, {
+          formAction: redirect.location
+        }),
+        // Preserve this flag across redirects
+        preventScrollReset: pendingPreventScrollReset
       });
     } else {
       // Otherwise, we kick off a new loading navigation, preserving the
@@ -2232,11 +2598,13 @@ function createRouter(init) {
         overrideNavigation: {
           state: "loading",
           location: redirectLocation,
-          formMethod: formMethod || undefined,
-          formAction: formAction || undefined,
-          formEncType: formEncType || undefined,
-          formData: formData || undefined
-        }
+          formMethod: submission ? submission.formMethod : undefined,
+          formAction: submission ? submission.formAction : undefined,
+          formEncType: submission ? submission.formEncType : undefined,
+          formData: submission ? submission.formData : undefined
+        },
+        // Preserve this flag across redirects
+        preventScrollReset: pendingPreventScrollReset
       });
     }
   }
@@ -2245,16 +2613,10 @@ function createRouter(init) {
     // Call all navigation loaders and revalidating fetcher loaders in parallel,
     // then slice off the results into separate arrays so we can handle them
     // accordingly
-    let results = await Promise.all([...matchesToLoad.map(match => callLoaderOrAction("loader", request, match, matches, router.basename)), ...fetchersToLoad.map(_ref8 => {
-      let [, href, match, fetchMatches] = _ref8;
-      return callLoaderOrAction("loader", createRequest(href, request.signal), match, fetchMatches, router.basename);
-    })]);
+    let results = await Promise.all([...matchesToLoad.map(match => callLoaderOrAction("loader", request, match, matches, router.basename)), ...fetchersToLoad.map(f => callLoaderOrAction("loader", createClientSideRequest(init.history, f.path, request.signal), f.match, f.matches, router.basename))]);
     let loaderResults = results.slice(0, matchesToLoad.length);
     let fetcherResults = results.slice(matchesToLoad.length);
-    await Promise.all([resolveDeferredResults(currentMatches, matchesToLoad, loaderResults, request.signal, false, state.loaderData), resolveDeferredResults(currentMatches, fetchersToLoad.map(_ref9 => {
-      let [,, match] = _ref9;
-      return match;
-    }), fetcherResults, request.signal, true)]);
+    await Promise.all([resolveDeferredResults(currentMatches, matchesToLoad, loaderResults, request.signal, false, state.loaderData), resolveDeferredResults(currentMatches, fetchersToLoad.map(f => f.match), fetcherResults, request.signal, true)]);
     return {
       results,
       loaderResults,
@@ -2312,7 +2674,8 @@ function createRouter(init) {
         formMethod: undefined,
         formAction: undefined,
         formEncType: undefined,
-        formData: undefined
+        formData: undefined,
+        " _hasFetcherDoneAnything ": true
       };
       state.fetchers.set(key, doneFetcher);
     }
@@ -2352,6 +2715,71 @@ function createRouter(init) {
 
     markFetchersDone(yeetedKeys);
     return yeetedKeys.length > 0;
+  }
+
+  function getBlocker(key, fn) {
+    let blocker = state.blockers.get(key) || IDLE_BLOCKER;
+
+    if (blockerFunctions.get(key) !== fn) {
+      blockerFunctions.set(key, fn);
+    }
+
+    return blocker;
+  }
+
+  function deleteBlocker(key) {
+    state.blockers.delete(key);
+    blockerFunctions.delete(key);
+  } // Utility function to update blockers, ensuring valid state transitions
+
+
+  function updateBlocker(key, newBlocker) {
+    let blocker = state.blockers.get(key) || IDLE_BLOCKER; // Poor mans state machine :)
+    // https://mermaid.live/edit#pako:eNqVkc9OwzAMxl8l8nnjAYrEtDIOHEBIgwvKJTReGy3_lDpIqO27k6awMG0XcrLlnz87nwdonESogKXXBuE79rq75XZO3-yHds0RJVuv70YrPlUrCEe2HfrORS3rubqZfuhtpg5C9wk5tZ4VKcRUq88q9Z8RS0-48cE1iHJkL0ugbHuFLus9L6spZy8nX9MP2CNdomVaposqu3fGayT8T8-jJQwhepo_UtpgBQaDEUom04dZhAN1aJBDlUKJBxE1ceB2Smj0Mln-IBW5AFU2dwUiktt_2Qaq2dBfaKdEup85UV7Yd-dKjlnkabl2Pvr0DTkTreM
+
+    invariant(blocker.state === "unblocked" && newBlocker.state === "blocked" || blocker.state === "blocked" && newBlocker.state === "blocked" || blocker.state === "blocked" && newBlocker.state === "proceeding" || blocker.state === "blocked" && newBlocker.state === "unblocked" || blocker.state === "proceeding" && newBlocker.state === "unblocked", "Invalid blocker state transition: " + blocker.state + " -> " + newBlocker.state);
+    state.blockers.set(key, newBlocker);
+    updateState({
+      blockers: new Map(state.blockers)
+    });
+  }
+
+  function shouldBlockNavigation(_ref2) {
+    let {
+      currentLocation,
+      nextLocation,
+      historyAction
+    } = _ref2;
+
+    if (blockerFunctions.size === 0) {
+      return;
+    } // We ony support a single active blocker at the moment since we don't have
+    // any compelling use cases for multi-blocker yet
+
+
+    if (blockerFunctions.size > 1) {
+      warning(false, "A router only supports one blocker at a time");
+    }
+
+    let entries = Array.from(blockerFunctions.entries());
+    let [blockerKey, blockerFunction] = entries[entries.length - 1];
+    let blocker = state.blockers.get(blockerKey);
+
+    if (blocker && blocker.state === "proceeding") {
+      // If the blocker is currently proceeding, we don't need to re-check
+      // it and can let this navigation continue
+      return;
+    } // At this point, we know we're unblocked/blocked so we need to check the
+    // user-provided blocker function
+
+
+    if (blockerFunction({
+      currentLocation,
+      nextLocation,
+      historyAction
+    })) {
+      return blockerKey;
+    }
   }
 
   function cancelActiveDeferreds(predicate) {
@@ -2446,6 +2874,8 @@ function createRouter(init) {
     getFetcher,
     deleteFetcher,
     dispose,
+    getBlocker,
+    deleteBlocker,
     _internalFetchControllers: fetchControllers,
     _internalActiveDeferreds: activeDeferreds
   };
@@ -2455,8 +2885,9 @@ function createRouter(init) {
 //#region createStaticHandler
 ////////////////////////////////////////////////////////////////////////////////
 
-function unstable_createStaticHandler(routes, opts) {
-  invariant(routes.length > 0, "You must provide a non-empty routes array to unstable_createStaticHandler");
+const UNSAFE_DEFERRED_SYMBOL = Symbol("deferred");
+function createStaticHandler(routes, opts) {
+  invariant(routes.length > 0, "You must provide a non-empty routes array to createStaticHandler");
   let dataRoutes = convertRoutesToDataRoutes(routes);
   let basename = (opts ? opts.basename : null) || "/";
   /**
@@ -2479,7 +2910,10 @@ function unstable_createStaticHandler(routes, opts) {
    * return it directly.
    */
 
-  async function query(request) {
+  async function query(request, _temp2) {
+    let {
+      requestContext
+    } = _temp2 === void 0 ? {} : _temp2;
     let url = new URL(request.url);
     let method = request.method.toLowerCase();
     let location = createLocation("", createPath(url), null, "default");
@@ -2504,7 +2938,8 @@ function unstable_createStaticHandler(routes, opts) {
         },
         statusCode: error.status,
         loaderHeaders: {},
-        actionHeaders: {}
+        actionHeaders: {},
+        activeDeferreds: null
       };
     } else if (!matches) {
       let error = getInternalRouterError(404, {
@@ -2525,13 +2960,14 @@ function unstable_createStaticHandler(routes, opts) {
         },
         statusCode: error.status,
         loaderHeaders: {},
-        actionHeaders: {}
+        actionHeaders: {},
+        activeDeferreds: null
       };
     }
 
-    let result = await queryImpl(request, location, matches);
+    let result = await queryImpl(request, location, matches, requestContext);
 
-    if (result instanceof Response) {
+    if (isResponse(result)) {
       return result;
     } // When returning StaticHandlerContext, we patch back in the location here
     // since we need it for React Context.  But this helps keep our submit and
@@ -2565,13 +3001,17 @@ function unstable_createStaticHandler(routes, opts) {
    */
 
 
-  async function queryRoute(request, routeId) {
+  async function queryRoute(request, _temp3) {
+    let {
+      routeId,
+      requestContext
+    } = _temp3 === void 0 ? {} : _temp3;
     let url = new URL(request.url);
     let method = request.method.toLowerCase();
     let location = createLocation("", createPath(url), null, "default");
     let matches = matchRoutes(dataRoutes, location, basename); // SSR supports HEAD requests while SPA doesn't
 
-    if (!isValidMethod(method) && method !== "head") {
+    if (!isValidMethod(method) && method !== "head" && method !== "options") {
       throw getInternalRouterError(405, {
         method
       });
@@ -2595,9 +3035,9 @@ function unstable_createStaticHandler(routes, opts) {
       });
     }
 
-    let result = await queryImpl(request, location, matches, match);
+    let result = await queryImpl(request, location, matches, requestContext, match);
 
-    if (result instanceof Response) {
+    if (isResponse(result)) {
       return result;
     }
 
@@ -2612,21 +3052,36 @@ function unstable_createStaticHandler(routes, opts) {
     } // Pick off the right state value to return
 
 
-    let routeData = [result.actionData, result.loaderData].find(v => v);
-    return Object.values(routeData || {})[0];
+    if (result.actionData) {
+      return Object.values(result.actionData)[0];
+    }
+
+    if (result.loaderData) {
+      var _result$activeDeferre;
+
+      let data = Object.values(result.loaderData)[0];
+
+      if ((_result$activeDeferre = result.activeDeferreds) != null && _result$activeDeferre[match.route.id]) {
+        data[UNSAFE_DEFERRED_SYMBOL] = result.activeDeferreds[match.route.id];
+      }
+
+      return data;
+    }
+
+    return undefined;
   }
 
-  async function queryImpl(request, location, matches, routeMatch) {
+  async function queryImpl(request, location, matches, requestContext, routeMatch) {
     invariant(request.signal, "query()/queryRoute() requests must contain an AbortController signal");
 
     try {
-      if (isSubmissionMethod(request.method.toLowerCase())) {
-        let result = await submit(request, matches, routeMatch || getTargetMatch(matches, location), routeMatch != null);
+      if (isMutationMethod(request.method.toLowerCase())) {
+        let result = await submit(request, matches, routeMatch || getTargetMatch(matches, location), requestContext, routeMatch != null);
         return result;
       }
 
-      let result = await loadRouteData(request, matches, routeMatch);
-      return result instanceof Response ? result : _extends({}, result, {
+      let result = await loadRouteData(request, matches, requestContext, routeMatch);
+      return isResponse(result) ? result : _extends({}, result, {
         actionData: null,
         actionHeaders: {}
       });
@@ -2652,13 +3107,13 @@ function unstable_createStaticHandler(routes, opts) {
     }
   }
 
-  async function submit(request, matches, actionMatch, isRouteRequest) {
+  async function submit(request, matches, actionMatch, requestContext, isRouteRequest) {
     let result;
 
     if (!actionMatch.route.action) {
       let error = getInternalRouterError(405, {
         method: request.method,
-        pathname: createURL(request.url).pathname,
+        pathname: new URL(request.url).pathname,
         routeId: actionMatch.route.id
       });
 
@@ -2671,7 +3126,7 @@ function unstable_createStaticHandler(routes, opts) {
         error
       };
     } else {
-      result = await callLoaderOrAction("action", request, actionMatch, matches, basename, true, isRouteRequest);
+      result = await callLoaderOrAction("action", request, actionMatch, matches, basename, true, isRouteRequest, requestContext);
 
       if (request.signal.aborted) {
         let method = isRouteRequest ? "queryRoute" : "query";
@@ -2693,7 +3148,18 @@ function unstable_createStaticHandler(routes, opts) {
     }
 
     if (isDeferredResult(result)) {
-      throw new Error("defer() is not supported in actions");
+      let error = getInternalRouterError(400, {
+        type: "defer-action"
+      });
+
+      if (isRouteRequest) {
+        throw error;
+      }
+
+      result = {
+        type: ResultType.error,
+        error
+      };
     }
 
     if (isRouteRequest) {
@@ -2714,7 +3180,8 @@ function unstable_createStaticHandler(routes, opts) {
         // return the raw Response or value
         statusCode: 200,
         loaderHeaders: {},
-        actionHeaders: {}
+        actionHeaders: {},
+        activeDeferreds: null
       };
     }
 
@@ -2722,7 +3189,7 @@ function unstable_createStaticHandler(routes, opts) {
       // Store off the pending error - we use it to determine which loaders
       // to call and will commit it when we complete the navigation
       let boundaryMatch = findNearestBoundary(matches, actionMatch.route.id);
-      let context = await loadRouteData(request, matches, undefined, {
+      let context = await loadRouteData(request, matches, requestContext, undefined, {
         [boundaryMatch.route.id]: result.error
       }); // action status codes take precedence over loader status codes
 
@@ -2733,9 +3200,15 @@ function unstable_createStaticHandler(routes, opts) {
           [actionMatch.route.id]: result.headers
         } : {})
       });
-    }
+    } // Create a GET request for the loaders
 
-    let context = await loadRouteData(request, matches);
+
+    let loaderRequest = new Request(request.url, {
+      headers: request.headers,
+      redirect: request.redirect,
+      signal: request.signal
+    });
+    let context = await loadRouteData(loaderRequest, matches, requestContext);
     return _extends({}, context, result.statusCode ? {
       statusCode: result.statusCode
     } : {}, {
@@ -2748,13 +3221,13 @@ function unstable_createStaticHandler(routes, opts) {
     });
   }
 
-  async function loadRouteData(request, matches, routeMatch, pendingActionError) {
+  async function loadRouteData(request, matches, requestContext, routeMatch, pendingActionError) {
     let isRouteRequest = routeMatch != null; // Short circuit if we have no loaders to run (queryRoute())
 
     if (isRouteRequest && !(routeMatch != null && routeMatch.route.loader)) {
       throw getInternalRouterError(400, {
         method: request.method,
-        pathname: createURL(request.url).pathname,
+        pathname: new URL(request.url).pathname,
         routeId: routeMatch == null ? void 0 : routeMatch.route.id
       });
     }
@@ -2765,31 +3238,37 @@ function unstable_createStaticHandler(routes, opts) {
     if (matchesToLoad.length === 0) {
       return {
         matches,
-        loaderData: {},
+        // Add a null for all matched routes for proper revalidation on the client
+        loaderData: matches.reduce((acc, m) => Object.assign(acc, {
+          [m.route.id]: null
+        }), {}),
         errors: pendingActionError || null,
         statusCode: 200,
-        loaderHeaders: {}
+        loaderHeaders: {},
+        activeDeferreds: null
       };
     }
 
-    let results = await Promise.all([...matchesToLoad.map(match => callLoaderOrAction("loader", request, match, matches, basename, true, isRouteRequest))]);
+    let results = await Promise.all([...matchesToLoad.map(match => callLoaderOrAction("loader", request, match, matches, basename, true, isRouteRequest, requestContext))]);
 
     if (request.signal.aborted) {
       let method = isRouteRequest ? "queryRoute" : "query";
       throw new Error(method + "() call aborted");
-    } // Can't do anything with these without the Remix side of things, so just
-    // cancel them for now
+    } // Process and commit output from loaders
 
 
-    results.forEach(result => {
-      if (isDeferredResult(result)) {
-        result.deferredData.cancel();
+    let activeDeferreds = new Map();
+    let context = processRouteLoaderData(matches, matchesToLoad, results, pendingActionError, activeDeferreds); // Add a null for any non-loader matches for proper revalidation on the client
+
+    let executedLoaders = new Set(matchesToLoad.map(match => match.route.id));
+    matches.forEach(match => {
+      if (!executedLoaders.has(match.route.id)) {
+        context.loaderData[match.route.id] = null;
       }
-    }); // Process and commit output from loaders
-
-    let context = processRouteLoaderData(matches, matchesToLoad, results, pendingActionError);
+    });
     return _extends({}, context, {
-      matches
+      matches,
+      activeDeferreds: activeDeferreds.size > 0 ? Object.fromEntries(activeDeferreds.entries()) : null
     });
   }
 
@@ -2848,40 +3327,38 @@ function normalizeNavigateOptions(to, opts, isFetcher) {
   } // Create a Submission on non-GET navigations
 
 
-  if (opts.formMethod && isSubmissionMethod(opts.formMethod)) {
-    return {
-      path,
-      submission: {
-        formMethod: opts.formMethod,
-        formAction: stripHashFromPath(path),
-        formEncType: opts && opts.formEncType || "application/x-www-form-urlencoded",
-        formData: opts.formData
-      }
+  let submission;
+
+  if (opts.formData) {
+    submission = {
+      formMethod: opts.formMethod || "get",
+      formAction: stripHashFromPath(path),
+      formEncType: opts && opts.formEncType || "application/x-www-form-urlencoded",
+      formData: opts.formData
     };
+
+    if (isMutationMethod(submission.formMethod)) {
+      return {
+        path,
+        submission
+      };
+    }
   } // Flatten submission onto URLSearchParams for GET submissions
 
 
   let parsedPath = parsePath(path);
+  let searchParams = convertFormDataToSearchParams(opts.formData); // Since fetcher GET submissions only run a single loader (as opposed to
+  // navigation GET submissions which run all loaders), we need to preserve
+  // any incoming ?index params
 
-  try {
-    let searchParams = convertFormDataToSearchParams(opts.formData); // Since fetcher GET submissions only run a single loader (as opposed to
-    // navigation GET submissions which run all loaders), we need to preserve
-    // any incoming ?index params
-
-    if (isFetcher && parsedPath.search && hasNakedIndexQuery(parsedPath.search)) {
-      searchParams.append("index", "");
-    }
-
-    parsedPath.search = "?" + searchParams;
-  } catch (e) {
-    return {
-      path,
-      error: getInternalRouterError(400)
-    };
+  if (isFetcher && parsedPath.search && hasNakedIndexQuery(parsedPath.search)) {
+    searchParams.append("index", "");
   }
 
+  parsedPath.search = "?" + searchParams;
   return {
-    path: createPath(parsedPath)
+    path: createPath(parsedPath),
+    submission
   };
 } // Filter out all routes below any caught error as they aren't going to
 // render so we don't need to load them
@@ -2901,26 +3378,74 @@ function getLoaderMatchesUntilBoundary(matches, boundaryId) {
   return boundaryMatches;
 }
 
-function getMatchesToLoad(state, matches, submission, location, isRevalidationRequired, cancelledDeferredRoutes, cancelledFetcherLoads, pendingActionData, pendingError, fetchLoadMatches) {
-  let actionResult = pendingError ? Object.values(pendingError)[0] : pendingActionData ? Object.values(pendingActionData)[0] : null; // Pick navigation matches that are net-new or qualify for revalidation
+function getMatchesToLoad(history, state, matches, submission, location, isRevalidationRequired, cancelledDeferredRoutes, cancelledFetcherLoads, pendingActionData, pendingError, fetchLoadMatches) {
+  let actionResult = pendingError ? Object.values(pendingError)[0] : pendingActionData ? Object.values(pendingActionData)[0] : undefined;
+  let currentUrl = history.createURL(state.location);
+  let nextUrl = history.createURL(location);
+  let defaultShouldRevalidate = // Forced revalidation due to submission, useRevalidate, or X-Remix-Revalidate
+  isRevalidationRequired || // Clicked the same link, resubmitted a GET form
+  currentUrl.toString() === nextUrl.toString() || // Search params affect all loaders
+  currentUrl.search !== nextUrl.search; // Pick navigation matches that are net-new or qualify for revalidation
 
   let boundaryId = pendingError ? Object.keys(pendingError)[0] : undefined;
   let boundaryMatches = getLoaderMatchesUntilBoundary(matches, boundaryId);
-  let navigationMatches = boundaryMatches.filter((match, index) => match.route.loader != null && (isNewLoader(state.loaderData, state.matches[index], match) || // If this route had a pending deferred cancelled it must be revalidated
-  cancelledDeferredRoutes.some(id => id === match.route.id) || shouldRevalidateLoader(state.location, state.matches[index], submission, location, match, isRevalidationRequired, actionResult))); // Pick fetcher.loads that need to be revalidated
+  let navigationMatches = boundaryMatches.filter((match, index) => {
+    if (match.route.loader == null) {
+      return false;
+    } // Always call the loader on new route instances and pending defer cancellations
+
+
+    if (isNewLoader(state.loaderData, state.matches[index], match) || cancelledDeferredRoutes.some(id => id === match.route.id)) {
+      return true;
+    } // This is the default implementation for when we revalidate.  If the route
+    // provides it's own implementation, then we give them full control but
+    // provide this value so they can leverage it if needed after they check
+    // their own specific use cases
+
+
+    let currentRouteMatch = state.matches[index];
+    let nextRouteMatch = match;
+    return shouldRevalidateLoader(match, _extends({
+      currentUrl,
+      currentParams: currentRouteMatch.params,
+      nextUrl,
+      nextParams: nextRouteMatch.params
+    }, submission, {
+      actionResult,
+      defaultShouldRevalidate: defaultShouldRevalidate || isNewRouteInstance(currentRouteMatch, nextRouteMatch)
+    }));
+  }); // Pick fetcher.loads that need to be revalidated
 
   let revalidatingFetchers = [];
-  fetchLoadMatches && fetchLoadMatches.forEach((_ref10, key) => {
-    let [href, match, fetchMatches] = _ref10;
-
-    // This fetcher was cancelled from a prior action submission - force reload
-    if (cancelledFetcherLoads.includes(key)) {
-      revalidatingFetchers.push([key, href, match, fetchMatches]);
-    } else if (isRevalidationRequired) {
-      let shouldRevalidate = shouldRevalidateLoader(href, match, submission, href, match, isRevalidationRequired, actionResult);
+  fetchLoadMatches && fetchLoadMatches.forEach((f, key) => {
+    if (!matches.some(m => m.route.id === f.routeId)) {
+      // This fetcher is not going to be present in the subsequent render so
+      // there's no need to revalidate it
+      return;
+    } else if (cancelledFetcherLoads.includes(key)) {
+      // This fetcher was cancelled from a prior action submission - force reload
+      revalidatingFetchers.push(_extends({
+        key
+      }, f));
+    } else {
+      // Revalidating fetchers are decoupled from the route matches since they
+      // hit a static href, so they _always_ check shouldRevalidate and the
+      // default is strictly if a revalidation is explicitly required (action
+      // submissions, useRevalidator, X-Remix-Revalidate).
+      let shouldRevalidate = shouldRevalidateLoader(f.match, _extends({
+        currentUrl,
+        currentParams: state.matches[state.matches.length - 1].params,
+        nextUrl,
+        nextParams: matches[matches.length - 1].params
+      }, submission, {
+        actionResult,
+        defaultShouldRevalidate
+      }));
 
       if (shouldRevalidate) {
-        revalidatingFetchers.push([key, href, match, fetchMatches]);
+        revalidatingFetchers.push(_extends({
+          key
+        }, f));
       }
     }
   });
@@ -2943,46 +3468,23 @@ function isNewRouteInstance(currentMatch, match) {
   return (// param change for this match, /users/123 -> /users/456
     currentMatch.pathname !== match.pathname || // splat param changed, which is not present in match.path
     // e.g. /files/images/avatar.jpg -> files/finances.xls
-    currentPath && currentPath.endsWith("*") && currentMatch.params["*"] !== match.params["*"]
+    currentPath != null && currentPath.endsWith("*") && currentMatch.params["*"] !== match.params["*"]
   );
 }
 
-function shouldRevalidateLoader(currentLocation, currentMatch, submission, location, match, isRevalidationRequired, actionResult) {
-  let currentUrl = createURL(currentLocation);
-  let currentParams = currentMatch.params;
-  let nextUrl = createURL(location);
-  let nextParams = match.params; // This is the default implementation as to when we revalidate.  If the route
-  // provides it's own implementation, then we give them full control but
-  // provide this value so they can leverage it if needed after they check
-  // their own specific use cases
-  // Note that fetchers always provide the same current/next locations so the
-  // URL-based checks here don't apply to fetcher shouldRevalidate calls
-
-  let defaultShouldRevalidate = isNewRouteInstance(currentMatch, match) || // Clicked the same link, resubmitted a GET form
-  currentUrl.toString() === nextUrl.toString() || // Search params affect all loaders
-  currentUrl.search !== nextUrl.search || // Forced revalidation due to submission, useRevalidate, or X-Remix-Revalidate
-  isRevalidationRequired;
-
-  if (match.route.shouldRevalidate) {
-    let routeChoice = match.route.shouldRevalidate(_extends({
-      currentUrl,
-      currentParams,
-      nextUrl,
-      nextParams
-    }, submission, {
-      actionResult,
-      defaultShouldRevalidate
-    }));
+function shouldRevalidateLoader(loaderMatch, arg) {
+  if (loaderMatch.route.shouldRevalidate) {
+    let routeChoice = loaderMatch.route.shouldRevalidate(arg);
 
     if (typeof routeChoice === "boolean") {
       return routeChoice;
     }
   }
 
-  return defaultShouldRevalidate;
+  return arg.defaultShouldRevalidate;
 }
 
-async function callLoaderOrAction(type, request, match, matches, basename, isStaticRequest, isRouteRequest) {
+async function callLoaderOrAction(type, request, match, matches, basename, isStaticRequest, isRouteRequest, requestContext) {
   if (basename === void 0) {
     basename = "/";
   }
@@ -3010,7 +3512,8 @@ async function callLoaderOrAction(type, request, match, matches, basename, isSta
     invariant(handler, "Could not find the " + type + " to run on the \"" + match.route.id + "\" route");
     result = await Promise.race([handler({
       request,
-      params: match.params
+      params: match.params,
+      context: requestContext
     }), abortPromise]);
     invariant(result !== undefined, "You defined " + (type === "action" ? "an action" : "a loader") + " for route " + ("\"" + match.route.id + "\" but didn't return anything from your `" + type + "` ") + "function. Please return a value or `null`.");
   } catch (e) {
@@ -3020,20 +3523,17 @@ async function callLoaderOrAction(type, request, match, matches, basename, isSta
     request.signal.removeEventListener("abort", onReject);
   }
 
-  if (result instanceof Response) {
+  if (isResponse(result)) {
     let status = result.status; // Process redirects
 
     if (redirectStatusCodes.has(status)) {
       let location = result.headers.get("Location");
-      invariant(location, "Redirects returned/thrown from loaders/actions must have a Location header"); // Check if this an external redirect that goes to a new origin
+      invariant(location, "Redirects returned/thrown from loaders/actions must have a Location header"); // Support relative routing in internal redirects
 
-      let external = createURL(location).origin !== createURL("/").origin; // Support relative routing in internal redirects
-
-      if (!external) {
+      if (!ABSOLUTE_URL_REGEX.test(location)) {
         let activeMatches = matches.slice(0, matches.indexOf(match) + 1);
         let routePathnames = getPathContributingMatches(activeMatches).map(match => match.pathnameBase);
-        let requestPath = createURL(request.url).pathname;
-        let resolvedLocation = resolveTo(location, routePathnames, requestPath);
+        let resolvedLocation = resolveTo(location, routePathnames, new URL(request.url).pathname);
         invariant(createPath(resolvedLocation), "Unable to resolve redirect location: " + location); // Prepend the basename to the redirect location if we have one
 
         if (basename) {
@@ -3042,6 +3542,16 @@ async function callLoaderOrAction(type, request, match, matches, basename, isSta
         }
 
         location = createPath(resolvedLocation);
+      } else if (!isStaticRequest) {
+        // Strip off the protocol+origin for same-origin absolute redirects.
+        // If this is a static reques, we can let it go back to the browser
+        // as-is
+        let currentUrl = new URL(request.url);
+        let url = location.startsWith("//") ? new URL(currentUrl.protocol + location) : new URL(location);
+
+        if (url.origin === currentUrl.origin) {
+          location = url.pathname + url.search + url.hash;
+        }
       } // Don't process redirects in the router during static requests requests.
       // Instead, throw the Response and let the server handle it with an HTTP
       // redirect.  We also update the Location header in place in this flow so
@@ -3057,8 +3567,7 @@ async function callLoaderOrAction(type, request, match, matches, basename, isSta
         type: ResultType.redirect,
         status,
         location,
-        revalidate: result.headers.get("X-Remix-Revalidate") !== null,
-        external
+        revalidate: result.headers.get("X-Remix-Revalidate") !== null
       };
     } // For SSR single-route requests, we want to hand Responses back directly
     // without unwrapping.  We do this with the QueryRouteResponse wrapper
@@ -3074,9 +3583,10 @@ async function callLoaderOrAction(type, request, match, matches, basename, isSta
     }
 
     let data;
-    let contentType = result.headers.get("Content-Type");
+    let contentType = result.headers.get("Content-Type"); // Check between word boundaries instead of startsWith() due to the last
+    // paragraph of https://httpwg.org/specs/rfc9110.html#field.content-type
 
-    if (contentType && contentType.startsWith("application/json")) {
+    if (contentType && /\bapplication\/json\b/.test(contentType)) {
       data = await result.json();
     } else {
       data = await result.text();
@@ -3116,15 +3626,18 @@ async function callLoaderOrAction(type, request, match, matches, basename, isSta
     type: ResultType.data,
     data: result
   };
-}
+} // Utility method for creating the Request instances for loaders/actions during
+// client-side navigations and fetches.  During SSR we will always have a
+// Request instance from the static handler (query/queryRoute)
 
-function createRequest(location, signal, submission) {
-  let url = createURL(stripHashFromPath(location)).toString();
+
+function createClientSideRequest(history, location, signal, submission) {
+  let url = history.createURL(stripHashFromPath(location)).toString();
   let init = {
     signal
   };
 
-  if (submission) {
+  if (submission && isMutationMethod(submission.formMethod)) {
     let {
       formMethod,
       formEncType,
@@ -3142,8 +3655,8 @@ function convertFormDataToSearchParams(formData) {
   let searchParams = new URLSearchParams();
 
   for (let [key, value] of formData.entries()) {
-    invariant(typeof value === "string", 'File inputs are not supported with encType "application/x-www-form-urlencoded", ' + 'please use "multipart/form-data" instead.');
-    searchParams.append(key, value);
+    // https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#converting-an-entry-list-to-a-list-of-name-value-pairs
+    searchParams.append(key, value instanceof File ? value.name : value);
   }
 
   return searchParams;
@@ -3174,9 +3687,14 @@ function processRouteLoaderData(matches, matchesToLoad, results, pendingError, a
         pendingError = undefined;
       }
 
-      errors = Object.assign(errors || {}, {
-        [boundaryMatch.route.id]: error
-      }); // Once we find our first (highest) error, we set the status code and
+      errors = errors || {}; // Prefer higher error values if lower errors bubble to the same boundary
+
+      if (errors[boundaryMatch.route.id] == null) {
+        errors[boundaryMatch.route.id] = error;
+      } // Clear our any prior loaderData for the throwing route
+
+
+      loaderData[id] = undefined; // Once we find our first (highest) error, we set the status code and
       // prevent deeper status codes from overriding
 
       if (!foundError) {
@@ -3187,12 +3705,15 @@ function processRouteLoaderData(matches, matchesToLoad, results, pendingError, a
       if (result.headers) {
         loaderHeaders[id] = result.headers;
       }
-    } else if (isDeferredResult(result)) {
-      activeDeferreds && activeDeferreds.set(id, result.deferredData);
-      loaderData[id] = result.deferredData.data; // TODO: Add statusCode/headers once we wire up streaming in Remix
     } else {
-      loaderData[id] = result.data; // Error status codes always override success status codes, but if all
+      if (isDeferredResult(result)) {
+        activeDeferreds.set(id, result.deferredData);
+        loaderData[id] = result.deferredData.data;
+      } else {
+        loaderData[id] = result.data;
+      } // Error status codes always override success status codes, but if all
       // loaders are successful we take the deepest status code.
+
 
       if (result.statusCode != null && result.statusCode !== 200 && !foundError) {
         statusCode = result.statusCode;
@@ -3203,10 +3724,12 @@ function processRouteLoaderData(matches, matchesToLoad, results, pendingError, a
       }
     }
   }); // If we didn't consume the pending action error (i.e., all loaders
-  // resolved), then consume it here
+  // resolved), then consume it here.  Also clear out any loaderData for the
+  // throwing route
 
   if (pendingError) {
     errors = pendingError;
+    loaderData[Object.keys(pendingError)[0]] = undefined;
   }
 
   return {
@@ -3224,7 +3747,10 @@ function processLoaderData(state, matches, matchesToLoad, results, pendingError,
   } = processRouteLoaderData(matches, matchesToLoad, results, pendingError, activeDeferreds); // Process results from our revalidating fetchers
 
   for (let index = 0; index < revalidatingFetchers.length; index++) {
-    let [key,, match] = revalidatingFetchers[index];
+    let {
+      key,
+      match
+    } = revalidatingFetchers[index];
     invariant(fetcherResults !== undefined && fetcherResults[index] !== undefined, "Did not find corresponding fetcher result");
     let result = fetcherResults[index]; // Process fetcher non-redirect errors
 
@@ -3241,11 +3767,11 @@ function processLoaderData(state, matches, matchesToLoad, results, pendingError,
     } else if (isRedirectResult(result)) {
       // Should never get here, redirects should get processed above, but we
       // keep this to type narrow to a success result in the else
-      throw new Error("Unhandled fetcher revalidation redirect");
+      invariant(false, "Unhandled fetcher revalidation redirect");
     } else if (isDeferredResult(result)) {
       // Should never get here, deferred data should be awaited for fetchers
       // in resolveDeferredResults
-      throw new Error("Unhandled fetcher deferred data");
+      invariant(false, "Unhandled fetcher deferred data");
     } else {
       let doneFetcher = {
         state: "idle",
@@ -3253,7 +3779,8 @@ function processLoaderData(state, matches, matchesToLoad, results, pendingError,
         formMethod: undefined,
         formAction: undefined,
         formEncType: undefined,
-        formData: undefined
+        formData: undefined,
+        " _hasFetcherDoneAnything ": true
       };
       state.fetchers.set(key, doneFetcher);
     }
@@ -3265,16 +3792,26 @@ function processLoaderData(state, matches, matchesToLoad, results, pendingError,
   };
 }
 
-function mergeLoaderData(loaderData, newLoaderData, matches) {
+function mergeLoaderData(loaderData, newLoaderData, matches, errors) {
   let mergedLoaderData = _extends({}, newLoaderData);
 
-  matches.forEach(match => {
+  for (let match of matches) {
     let id = match.route.id;
 
-    if (newLoaderData[id] === undefined && loaderData[id] !== undefined) {
+    if (newLoaderData.hasOwnProperty(id)) {
+      if (newLoaderData[id] !== undefined) {
+        mergedLoaderData[id] = newLoaderData[id];
+      }
+    } else if (loaderData[id] !== undefined) {
       mergedLoaderData[id] = loaderData[id];
     }
-  });
+
+    if (errors && errors.hasOwnProperty(id)) {
+      // Don't keep any loader data below the boundary
+      break;
+    }
+  }
+
   return mergedLoaderData;
 } // Find the nearest error boundary, looking upwards from the leaf route (or the
 // route specified by routeId) for the closest ancestor error boundary,
@@ -3302,13 +3839,13 @@ function getShortCircuitMatches(routes) {
   };
 }
 
-function getInternalRouterError(status, _temp) {
+function getInternalRouterError(status, _temp4) {
   let {
     pathname,
     routeId,
     method,
-    message
-  } = _temp === void 0 ? {} : _temp;
+    type
+  } = _temp4 === void 0 ? {} : _temp4;
   let statusText = "Unknown Server Error";
   let errorMessage = "Unknown @remix-run/router error";
 
@@ -3317,8 +3854,8 @@ function getInternalRouterError(status, _temp) {
 
     if (method && pathname && routeId) {
       errorMessage = "You made a " + method + " request to \"" + pathname + "\" but " + ("did not provide a `loader` for route \"" + routeId + "\", ") + "so there is no way to handle the request.";
-    } else {
-      errorMessage = "Cannot submit binary form data using GET";
+    } else if (type === "defer-action") {
+      errorMessage = "defer() is not supported in actions";
     }
   } else if (status === 403) {
     statusText = "Forbidden";
@@ -3373,8 +3910,12 @@ function isRedirectResult(result) {
   return (result && result.type) === ResultType.redirect;
 }
 
+function isResponse(value) {
+  return value != null && typeof value.status === "number" && typeof value.statusText === "string" && typeof value.headers === "object" && typeof value.body !== "undefined";
+}
+
 function isRedirectResponse(result) {
-  if (!(result instanceof Response)) {
+  if (!isResponse(result)) {
     return false;
   }
 
@@ -3384,15 +3925,15 @@ function isRedirectResponse(result) {
 }
 
 function isQueryRouteResponse(obj) {
-  return obj && obj.response instanceof Response && (obj.type === ResultType.data || ResultType.error);
+  return obj && isResponse(obj.response) && (obj.type === ResultType.data || ResultType.error);
 }
 
 function isValidMethod(method) {
   return validRequestMethods.has(method);
 }
 
-function isSubmissionMethod(method) {
-  return validActionMethods.has(method);
+function isMutationMethod(method) {
+  return validMutationMethods.has(method);
 }
 
 async function resolveDeferredResults(currentMatches, matchesToLoad, results, signal, isFetcher, currentLoaderData) {
@@ -3523,9 +4064,7 @@ var __setModuleDefault = this && this.__setModuleDefault || (Object.create ? fun
 var __importStar = this && this.__importStar || function (mod) {
   if (mod && mod.__esModule) return mod;
   var result = {};
-  if (mod != null) for (var k in mod) {
-    if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-  }
+  if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
   __setModuleDefault(result, mod);
   return result;
 };
@@ -3537,8 +4076,8 @@ var __importDefault = this && this.__importDefault || function (mod) {
 exports.__esModule = true;
 __webpack_require__(/*! https://kit.fontawesome.com/4e5a72c756.js */ "https://kit.fontawesome.com/4e5a72c756.js"); // Font awesome
 __webpack_require__(/*! ./App.css */ "./src/App.css");
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
-var react_router_dom_1 = __webpack_require__(/*! react-router-dom */ "./node_modules/.pnpm/react-router-dom@6.4.4_biqbaboplfbrettd7655fr4n2y/node_modules/react-router-dom/dist/index.js");
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
+var react_router_dom_1 = __webpack_require__(/*! react-router-dom */ "./node_modules/react-router-dom/dist/index.js");
 var Navbar_1 = __importDefault(__webpack_require__(/*! ./components/Navbar */ "./src/components/Navbar.tsx"));
 var NameStatus_1 = __importDefault(__webpack_require__(/*! ./components/NameStatus */ "./src/components/NameStatus.tsx"));
 var About_1 = __importDefault(__webpack_require__(/*! ./components/About */ "./src/components/About.tsx"));
@@ -3596,7 +4135,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 function About(props) {
   return react_1["default"].createElement("section", {
     className: 'section'
@@ -3624,7 +4163,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 function Card(props) {
   return react_1["default"].createElement("div", {
     className: 'level-item has-text-centered'
@@ -3659,7 +4198,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 var Card_1 = __importDefault(__webpack_require__(/*! ./Card */ "./src/components/Contact/Card.tsx"));
 function Contact(props) {
   return react_1["default"].createElement("section", {
@@ -3697,7 +4236,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 function Card(props) {
   return react_1["default"].createElement("div", {
     className: 'card'
@@ -3735,7 +4274,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 var Card_1 = __importDefault(__webpack_require__(/*! ./Card */ "./src/components/Experience/Card.tsx"));
 function Experience(props) {
   return react_1["default"].createElement("section", {
@@ -3772,7 +4311,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 function NameStatus(props) {
   return react_1["default"].createElement("section", {
     className: 'hero is-primary'
@@ -3797,7 +4336,10 @@ function NameStatus(props) {
     className: 'title is-1'
   }, props.fullname), react_1["default"].createElement("h2", {
     className: 'subtitle'
-  }, props.status))))));
+  }, props.status), react_1["default"].createElement("img", {
+    src: 'https://visitor-badge.glitch.me/badge?page_id=khoakomlem.khoakomlem',
+    alt: 'Visitors'
+  }))))));
 }
 exports["default"] = NameStatus;
 
@@ -3817,7 +4359,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 function Navbar(props) {
   return react_1["default"].createElement("nav", {
     className: 'navbar is-primary',
@@ -3856,7 +4398,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 function Card(props) {
   return react_1["default"].createElement(react_1["default"].Fragment, null, react_1["default"].createElement("div", {
     className: 'tile is-parent modal-trigger',
@@ -3890,7 +4432,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 function Modal(props) {
   return react_1["default"].createElement("div", {
     id: props.id,
@@ -3949,7 +4491,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 var Card_1 = __importDefault(__webpack_require__(/*! ./Card */ "./src/components/Project/Card.tsx"));
 function Project(props) {
   return react_1["default"].createElement("section", {
@@ -3992,9 +4534,9 @@ var __importDefault = this && this.__importDefault || function (mod) {
   };
 };
 exports.__esModule = true;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
-var client_1 = __importDefault(__webpack_require__(/*! react-dom/client */ "./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/client.js"));
-var react_router_dom_1 = __webpack_require__(/*! react-router-dom */ "./node_modules/.pnpm/react-router-dom@6.4.4_biqbaboplfbrettd7655fr4n2y/node_modules/react-router-dom/dist/index.js");
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
+var client_1 = __importDefault(__webpack_require__(/*! react-dom/client */ "./node_modules/react-dom/client.js"));
+var react_router_dom_1 = __webpack_require__(/*! react-router-dom */ "./node_modules/react-router-dom/dist/index.js");
 __webpack_require__(/*! ./index.css */ "./src/index.css");
 var App_1 = __importDefault(__webpack_require__(/*! ./App */ "./src/App.tsx"));
 var reportWebVitals_1 = __importDefault(__webpack_require__(/*! ./reportWebVitals */ "./src/reportWebVitals.js"));
@@ -4028,7 +4570,7 @@ var __importDefault = this && this.__importDefault || function (mod) {
 };
 exports.__esModule = true;
 exports.Default = void 0;
-var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js"));
+var react_1 = __importDefault(__webpack_require__(/*! react */ "./node_modules/react/index.js"));
 var Modal_1 = __importDefault(__webpack_require__(/*! ../components/Project/Modal */ "./src/components/Project/Modal.tsx"));
 exports.Default = {
   githubUsername: 'khoakomlem',
@@ -4222,9 +4764,7 @@ var __assign = this && this.__assign || function () {
   __assign = Object.assign || function (t) {
     for (var s, i = 1, n = arguments.length; i < n; i++) {
       s = arguments[i];
-      for (var p in s) {
-        if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
-      }
+      for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
     }
     return t;
   };
@@ -4252,9 +4792,7 @@ var __assign = this && this.__assign || function () {
   __assign = Object.assign || function (t) {
     for (var s, i = 1, n = arguments.length; i < n; i++) {
       s = arguments[i];
-      for (var p in s) {
-        if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
-      }
+      for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
     }
     return t;
   };
@@ -4317,7 +4855,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 var reportWebVitals = function reportWebVitals(onPerfEntry) {
   if (onPerfEntry && onPerfEntry instanceof Function) {
-    __webpack_require__.e(/*! import() */ "node_modules_pnpm_web-vitals_2_1_4_node_modules_web-vitals_dist_web-vitals_js").then(__webpack_require__.bind(__webpack_require__, /*! web-vitals */ "./node_modules/.pnpm/web-vitals@2.1.4/node_modules/web-vitals/dist/web-vitals.js")).then(function (_ref) {
+    __webpack_require__.e(/*! import() */ "node_modules_web-vitals_dist_web-vitals_js").then(__webpack_require__.bind(__webpack_require__, /*! web-vitals */ "./node_modules/web-vitals/dist/web-vitals.js")).then(function (_ref) {
       var getCLS = _ref.getCLS,
         getFID = _ref.getFID,
         getFCP = _ref.getFCP,
@@ -4335,21 +4873,21 @@ var reportWebVitals = function reportWebVitals(onPerfEntry) {
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/.pnpm/postcss-loader@6.2.1_upg3rk2kpasnbk27hkqapxaxfq/node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/App.css":
-/*!*****************************************************************************************************************************************************************************************************************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/.pnpm/postcss-loader@6.2.1_upg3rk2kpasnbk27hkqapxaxfq/node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/App.css ***!
-  \*****************************************************************************************************************************************************************************************************************************************************************************************************/
+/***/ "./node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/App.css":
+/*!*******************************************************************************************************************************************************************************!*\
+  !*** ./node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/App.css ***!
+  \*******************************************************************************************************************************************************************************/
 /***/ ((module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/runtime/api.js */ "./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/runtime/api.js");
-/* harmony import */ var _node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../node_modules/css-loader/dist/runtime/api.js */ "./node_modules/css-loader/dist/runtime/api.js");
+/* harmony import */ var _node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0__);
 // Imports
 
-var ___CSS_LOADER_EXPORT___ = _node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0___default()(function(i){return i[1]});
+var ___CSS_LOADER_EXPORT___ = _node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0___default()(function(i){return i[1]});
 ___CSS_LOADER_EXPORT___.push([module.id, "@import url(https://fonts.googleapis.com/css?family=Lato:300,400,700,900);"]);
 // Module
 ___CSS_LOADER_EXPORT___.push([module.id, "/*! Flickity v2.2.1\nhttps://flickity.metafizzy.co\n---------------------------------------------- */\n.flickity-enabled {\n\tposition: relative;\n}\n.flickity-enabled:focus {\n\toutline: none;\n}\n.flickity-viewport {\n\toverflow: hidden;\n\tposition: relative;\n\theight: 100%;\n}\n.flickity-slider {\n\tposition: absolute;\n\twidth: 100%;\n\theight: 100%;\n}\n.flickity-enabled.is-draggable {\n\t-webkit-tap-highlight-color: transparent;\n\t-webkit-user-select: none;\n\tuser-select: none;\n}\n.flickity-enabled.is-draggable .flickity-viewport {\n\tcursor: move;\n\tcursor: grab;\n}\n.flickity-enabled.is-draggable .flickity-viewport.is-pointer-down {\n\tcursor: grabbing;\n}\n.flickity-button {\n\tposition: absolute;\n\tbackground: hsla(0, 0%, 100%, 0.75);\n\tborder: none;\n\tcolor: #333;\n}\n.flickity-button:hover {\n\tbackground: #fff;\n\tcursor: pointer;\n}\n.flickity-button:focus {\n\toutline: none;\n\tbox-shadow: 0 0 0 5px #19f;\n}\n.flickity-button:active {\n\topacity: 0.6;\n}\n.flickity-button:disabled {\n\topacity: 0.3;\n\tcursor: auto;\n\tpointer-events: none;\n}\n.flickity-button-icon {\n\tfill: currentColor;\n}\n.flickity-prev-next-button {\n\ttop: 50%;\n\twidth: 44px;\n\theight: 44px;\n\tborder-radius: 50%;\n\ttransform: translateY(-50%);\n}\n.flickity-prev-next-button.previous {\n\tleft: 10px;\n}\n.flickity-prev-next-button.next {\n\tright: 10px;\n}\n.flickity-rtl .flickity-prev-next-button.previous {\n\tleft: auto;\n\tright: 10px;\n}\n.flickity-rtl .flickity-prev-next-button.next {\n\tright: auto;\n\tleft: 10px;\n}\n.flickity-prev-next-button .flickity-button-icon {\n\tposition: absolute;\n\tleft: 20%;\n\ttop: 20%;\n\twidth: 60%;\n\theight: 60%;\n}\n.flickity-page-dots {\n\tposition: absolute;\n\twidth: 100%;\n\tbottom: -25px;\n\tpadding: 0;\n\tmargin: 0;\n\tlist-style: none;\n\ttext-align: center;\n\tline-height: 1;\n}\n.flickity-rtl .flickity-page-dots {\n\tdirection: rtl;\n}\n.flickity-page-dots .dot {\n\tdisplay: inline-block;\n\twidth: 10px;\n\theight: 10px;\n\tmargin: 0 8px;\n\tbackground: #333;\n\tborder-radius: 50%;\n\topacity: 0.25;\n\tcursor: pointer;\n}\n.flickity-page-dots .dot.is-selected {\n\topacity: 1;\n}\n.card-gap {\n\tmargin-top: 1.75rem;\n}\n.modal-trigger {\n\tcursor: pointer;\n}\na.icon > strong {\n\tmargin-left: 0.25rem;\n}\n.modal-card-body div.content {\n\tmargin: 1.75rem 0;\n} /*! bulma.io v0.8.2 | MIT License | github.com/jgthms/bulma */\n@keyframes spinAround {\n\t0% {\n\t\ttransform: rotate(0deg);\n\t}\n\tto {\n\t\ttransform: rotate(359deg);\n\t}\n}\n.breadcrumb,\n.button,\n.delete,\n.file,\n.is-unselectable,\n.modal-close,\n.pagination-ellipsis,\n.pagination-link,\n.pagination-next,\n.pagination-previous,\n.tabs {\n\t-webkit-touch-callout: none;\n\t-webkit-user-select: none;\n\tuser-select: none;\n}\n.navbar-link:not(.is-arrowless):after,\n.select:not(.is-multiple):not(.is-loading):after {\n\tborder: 3px solid transparent;\n\tborder-radius: 2px;\n\tborder-right: 0;\n\tborder-top: 0;\n\tcontent: \" \";\n\tdisplay: block;\n\theight: 0.625em;\n\tmargin-top: -0.4375em;\n\tpointer-events: none;\n\tposition: absolute;\n\ttop: 50%;\n\ttransform: rotate(-45deg);\n\ttransform-origin: center;\n\twidth: 0.625em;\n}\n.block:not(:last-child),\n.box:not(:last-child),\n.breadcrumb:not(:last-child),\n.content:not(:last-child),\n.highlight:not(:last-child),\n.level:not(:last-child),\n.list:not(:last-child),\n.message:not(:last-child),\n.notification:not(:last-child),\n.pagination:not(:last-child),\n.progress:not(:last-child),\n.subtitle:not(:last-child),\n.table-container:not(:last-child),\n.table:not(:last-child),\n.tabs:not(:last-child),\n.title:not(:last-child) {\n\tmargin-bottom: 1.5rem;\n}\n.delete,\n.modal-close {\n\t-moz-appearance: none;\n\t-webkit-appearance: none;\n\tbackground-color: rgba(10, 10, 10, 0.2);\n\tborder: none;\n\tborder-radius: 290486px;\n\tcursor: pointer;\n\tpointer-events: auto;\n\tdisplay: inline-block;\n\tflex-grow: 0;\n\tflex-shrink: 0;\n\tfont-size: 0;\n\theight: 20px;\n\tmax-height: 20px;\n\tmax-width: 20px;\n\tmin-height: 20px;\n\tmin-width: 20px;\n\toutline: none;\n\tposition: relative;\n\tvertical-align: top;\n\twidth: 20px;\n}\n.delete:after,\n.delete:before,\n.modal-close:after,\n.modal-close:before {\n\tbackground-color: #fff;\n\tcontent: \"\";\n\tdisplay: block;\n\tleft: 50%;\n\tposition: absolute;\n\ttop: 50%;\n\ttransform: translateX(-50%) translateY(-50%) rotate(45deg);\n\ttransform-origin: center center;\n}\n.delete:before,\n.modal-close:before {\n\theight: 2px;\n\twidth: 50%;\n}\n.delete:after,\n.modal-close:after {\n\theight: 50%;\n\twidth: 2px;\n}\n.delete:focus,\n.delete:hover,\n.modal-close:focus,\n.modal-close:hover {\n\tbackground-color: rgba(10, 10, 10, 0.3);\n}\n.delete:active,\n.modal-close:active {\n\tbackground-color: rgba(10, 10, 10, 0.4);\n}\n.is-small.delete,\n.is-small.modal-close {\n\theight: 16px;\n\tmax-height: 16px;\n\tmax-width: 16px;\n\tmin-height: 16px;\n\tmin-width: 16px;\n\twidth: 16px;\n}\n.is-medium.delete,\n.is-medium.modal-close {\n\theight: 24px;\n\tmax-height: 24px;\n\tmax-width: 24px;\n\tmin-height: 24px;\n\tmin-width: 24px;\n\twidth: 24px;\n}\n.is-large.delete,\n.is-large.modal-close {\n\theight: 32px;\n\tmax-height: 32px;\n\tmax-width: 32px;\n\tmin-height: 32px;\n\tmin-width: 32px;\n\twidth: 32px;\n}\n.button.is-loading:after,\n.control.is-loading:after,\n.loader,\n.select.is-loading:after {\n\tanimation: spinAround 0.5s linear infinite;\n\tborder-radius: 290486px;\n\tborder-color: transparent transparent #dbdbdb #dbdbdb;\n\tborder-style: solid;\n\tborder-width: 2px;\n\tcontent: \"\";\n\tdisplay: block;\n\theight: 1em;\n\tposition: relative;\n\twidth: 1em;\n}\n.hero-video,\n.image.is-1by1 .has-ratio,\n.image.is-1by1 img,\n.image.is-1by2 .has-ratio,\n.image.is-1by2 img,\n.image.is-1by3 .has-ratio,\n.image.is-1by3 img,\n.image.is-2by1 .has-ratio,\n.image.is-2by1 img,\n.image.is-2by3 .has-ratio,\n.image.is-2by3 img,\n.image.is-3by1 .has-ratio,\n.image.is-3by1 img,\n.image.is-3by2 .has-ratio,\n.image.is-3by2 img,\n.image.is-3by4 .has-ratio,\n.image.is-3by4 img,\n.image.is-3by5 .has-ratio,\n.image.is-3by5 img,\n.image.is-4by3 .has-ratio,\n.image.is-4by3 img,\n.image.is-4by5 .has-ratio,\n.image.is-4by5 img,\n.image.is-5by3 .has-ratio,\n.image.is-5by3 img,\n.image.is-5by4 .has-ratio,\n.image.is-5by4 img,\n.image.is-9by16 .has-ratio,\n.image.is-9by16 img,\n.image.is-16by9 .has-ratio,\n.image.is-16by9 img,\n.image.is-square .has-ratio,\n.image.is-square img,\n.is-overlay,\n.modal,\n.modal-background {\n\tbottom: 0;\n\tleft: 0;\n\tposition: absolute;\n\tright: 0;\n\ttop: 0;\n}\n.button,\n.file-cta,\n.file-name,\n.input,\n.pagination-ellipsis,\n.pagination-link,\n.pagination-next,\n.pagination-previous,\n.select select,\n.textarea {\n\t-moz-appearance: none;\n\t-webkit-appearance: none;\n\talign-items: center;\n\tborder: 1px solid transparent;\n\tborder-radius: 4px;\n\tbox-shadow: none;\n\tdisplay: inline-flex;\n\tfont-size: 1rem;\n\theight: 2.5em;\n\tjustify-content: flex-start;\n\tline-height: 1.5;\n\tpadding: calc(0.5em - 1px) calc(0.75em - 1px);\n\tposition: relative;\n\tvertical-align: top;\n}\n.button:active,\n.button:focus,\n.file-cta:active,\n.file-cta:focus,\n.file-name:active,\n.file-name:focus,\n.input:active,\n.input:focus,\n.is-active.button,\n.is-active.file-cta,\n.is-active.file-name,\n.is-active.input,\n.is-active.pagination-ellipsis,\n.is-active.pagination-link,\n.is-active.pagination-next,\n.is-active.pagination-previous,\n.is-active.textarea,\n.is-focused.button,\n.is-focused.file-cta,\n.is-focused.file-name,\n.is-focused.input,\n.is-focused.pagination-ellipsis,\n.is-focused.pagination-link,\n.is-focused.pagination-next,\n.is-focused.pagination-previous,\n.is-focused.textarea,\n.pagination-ellipsis:active,\n.pagination-ellipsis:focus,\n.pagination-link:active,\n.pagination-link:focus,\n.pagination-next:active,\n.pagination-next:focus,\n.pagination-previous:active,\n.pagination-previous:focus,\n.select select.is-active,\n.select select.is-focused,\n.select select:active,\n.select select:focus,\n.textarea:active,\n.textarea:focus {\n\toutline: none;\n}\n.button[disabled],\n.file-cta[disabled],\n.file-name[disabled],\n.input[disabled],\n.pagination-ellipsis[disabled],\n.pagination-link[disabled],\n.pagination-next[disabled],\n.pagination-previous[disabled],\n.select fieldset[disabled] select,\n.select select[disabled],\n.textarea[disabled],\nfieldset[disabled] .button,\nfieldset[disabled] .file-cta,\nfieldset[disabled] .file-name,\nfieldset[disabled] .input,\nfieldset[disabled] .pagination-ellipsis,\nfieldset[disabled] .pagination-link,\nfieldset[disabled] .pagination-next,\nfieldset[disabled] .pagination-previous,\nfieldset[disabled] .select select,\nfieldset[disabled] .textarea {\n\tcursor: not-allowed;\n} /*! minireset.css v0.0.6 | MIT License | github.com/jgthms/minireset.css */\nblockquote,\nbody,\ndd,\ndl,\ndt,\nfieldset,\nfigure,\nh1,\nh2,\nh3,\nh4,\nh5,\nh6,\nhr,\nhtml,\niframe,\nlegend,\nli,\nol,\np,\npre,\ntextarea,\nul {\n\tmargin: 0;\n\tpadding: 0;\n}\nh1,\nh2,\nh3,\nh4,\nh5,\nh6 {\n\tfont-size: 100%;\n\tfont-weight: 400;\n}\nul {\n\tlist-style: none;\n}\nbutton,\ninput,\nselect,\ntextarea {\n\tmargin: 0;\n}\nhtml {\n\tbox-sizing: border-box;\n}\n*,\n:after,\n:before {\n\tbox-sizing: inherit;\n}\nimg,\nvideo {\n\theight: auto;\n\tmax-width: 100%;\n}\niframe {\n\tborder: 0;\n}\ntable {\n\tborder-collapse: collapse;\n\tborder-spacing: 0;\n}\ntd,\nth {\n\tpadding: 0;\n}\ntd:not([align]),\nth:not([align]) {\n\ttext-align: left;\n}\nhtml {\n\tbackground-color: #fff;\n\tfont-size: 16px;\n\t-moz-osx-font-smoothing: grayscale;\n\t-webkit-font-smoothing: antialiased;\n\tmin-width: 300px;\n\toverflow-x: hidden;\n\toverflow-y: scroll;\n\ttext-rendering: optimizeLegibility;\n\ttext-size-adjust: 100%;\n}\narticle,\naside,\nfigure,\nfooter,\nheader,\nhgroup,\nsection {\n\tdisplay: block;\n}\nbody,\nbutton,\ninput,\nselect,\ntextarea {\n\tfont-family: Lato, sans-serif;\n}\ncode,\npre {\n\t-moz-osx-font-smoothing: auto;\n\t-webkit-font-smoothing: auto;\n\tfont-family: monospace;\n}\nbody {\n\tcolor: #4a4a4a;\n\tfont-size: 1em;\n\tfont-weight: 400;\n\tline-height: 1.5;\n}\na {\n\tcolor: #00d1b2;\n\tcursor: pointer;\n\ttext-decoration: none;\n}\na strong {\n\tcolor: currentColor;\n}\na:hover {\n\tcolor: #363636;\n}\ncode {\n\tcolor: #f14668;\n\tfont-size: 0.875em;\n\tfont-weight: 400;\n\tpadding: 0.25em 0.5em;\n}\ncode,\nhr {\n\tbackground-color: #f5f5f5;\n}\nhr {\n\tborder: none;\n\tdisplay: block;\n\theight: 2px;\n\tmargin: 1.5rem 0;\n}\nimg {\n\theight: auto;\n\tmax-width: 100%;\n}\ninput[type=\"checkbox\"],\ninput[type=\"radio\"] {\n\tvertical-align: baseline;\n}\nsmall {\n\tfont-size: 0.875em;\n}\nspan {\n\tfont-style: inherit;\n\tfont-weight: inherit;\n}\nstrong {\n\tcolor: #363636;\n\tfont-weight: 700;\n}\nfieldset {\n\tborder: none;\n}\npre {\n\t-webkit-overflow-scrolling: touch;\n\tbackground-color: #f5f5f5;\n\tcolor: #4a4a4a;\n\tfont-size: 0.875em;\n\toverflow-x: auto;\n\tpadding: 1.25rem 1.5rem;\n\twhite-space: pre;\n\tword-wrap: normal;\n}\npre code {\n\tbackground-color: transparent;\n\tcolor: currentColor;\n\tfont-size: 1em;\n\tpadding: 0;\n}\ntable td,\ntable th {\n\tvertical-align: top;\n}\ntable td:not([align]),\ntable th:not([align]) {\n\ttext-align: left;\n}\ntable th {\n\tcolor: #363636;\n}\n.is-clearfix:after {\n\tclear: both;\n\tcontent: \" \";\n\tdisplay: table;\n}\n.is-pulled-left {\n\tfloat: left !important;\n}\n.is-pulled-right {\n\tfloat: right !important;\n}\n.is-clipped {\n\toverflow: hidden !important;\n}\n.is-size-1 {\n\tfont-size: 3rem !important;\n}\n.is-size-2 {\n\tfont-size: 2.5rem !important;\n}\n.is-size-3 {\n\tfont-size: 2rem !important;\n}\n.is-size-4 {\n\tfont-size: 1.5rem !important;\n}\n.is-size-5 {\n\tfont-size: 1.25rem !important;\n}\n.is-size-6 {\n\tfont-size: 1rem !important;\n}\n.is-size-7 {\n\tfont-size: 0.75rem !important;\n}\n@media screen and (max-width: 768px) {\n\t.is-size-1-mobile {\n\t\tfont-size: 3rem !important;\n\t}\n\t.is-size-2-mobile {\n\t\tfont-size: 2.5rem !important;\n\t}\n\t.is-size-3-mobile {\n\t\tfont-size: 2rem !important;\n\t}\n\t.is-size-4-mobile {\n\t\tfont-size: 1.5rem !important;\n\t}\n\t.is-size-5-mobile {\n\t\tfont-size: 1.25rem !important;\n\t}\n\t.is-size-6-mobile {\n\t\tfont-size: 1rem !important;\n\t}\n\t.is-size-7-mobile {\n\t\tfont-size: 0.75rem !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.is-size-1-tablet {\n\t\tfont-size: 3rem !important;\n\t}\n\t.is-size-2-tablet {\n\t\tfont-size: 2.5rem !important;\n\t}\n\t.is-size-3-tablet {\n\t\tfont-size: 2rem !important;\n\t}\n\t.is-size-4-tablet {\n\t\tfont-size: 1.5rem !important;\n\t}\n\t.is-size-5-tablet {\n\t\tfont-size: 1.25rem !important;\n\t}\n\t.is-size-6-tablet {\n\t\tfont-size: 1rem !important;\n\t}\n\t.is-size-7-tablet {\n\t\tfont-size: 0.75rem !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.is-size-1-touch {\n\t\tfont-size: 3rem !important;\n\t}\n\t.is-size-2-touch {\n\t\tfont-size: 2.5rem !important;\n\t}\n\t.is-size-3-touch {\n\t\tfont-size: 2rem !important;\n\t}\n\t.is-size-4-touch {\n\t\tfont-size: 1.5rem !important;\n\t}\n\t.is-size-5-touch {\n\t\tfont-size: 1.25rem !important;\n\t}\n\t.is-size-6-touch {\n\t\tfont-size: 1rem !important;\n\t}\n\t.is-size-7-touch {\n\t\tfont-size: 0.75rem !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.is-size-1-desktop {\n\t\tfont-size: 3rem !important;\n\t}\n\t.is-size-2-desktop {\n\t\tfont-size: 2.5rem !important;\n\t}\n\t.is-size-3-desktop {\n\t\tfont-size: 2rem !important;\n\t}\n\t.is-size-4-desktop {\n\t\tfont-size: 1.5rem !important;\n\t}\n\t.is-size-5-desktop {\n\t\tfont-size: 1.25rem !important;\n\t}\n\t.is-size-6-desktop {\n\t\tfont-size: 1rem !important;\n\t}\n\t.is-size-7-desktop {\n\t\tfont-size: 0.75rem !important;\n\t}\n}\n.has-text-centered {\n\ttext-align: center !important;\n}\n.has-text-justified {\n\ttext-align: justify !important;\n}\n.has-text-left {\n\ttext-align: left !important;\n}\n.has-text-right {\n\ttext-align: right !important;\n}\n@media screen and (max-width: 768px) {\n\t.has-text-centered-mobile {\n\t\ttext-align: center !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.has-text-centered-tablet {\n\t\ttext-align: center !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.has-text-centered-tablet-only {\n\t\ttext-align: center !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.has-text-centered-touch {\n\t\ttext-align: center !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.has-text-centered-desktop {\n\t\ttext-align: center !important;\n\t}\n}\n@media screen and (max-width: 768px) {\n\t.has-text-justified-mobile {\n\t\ttext-align: justify !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.has-text-justified-tablet {\n\t\ttext-align: justify !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.has-text-justified-tablet-only {\n\t\ttext-align: justify !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.has-text-justified-touch {\n\t\ttext-align: justify !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.has-text-justified-desktop {\n\t\ttext-align: justify !important;\n\t}\n}\n@media screen and (max-width: 768px) {\n\t.has-text-left-mobile {\n\t\ttext-align: left !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.has-text-left-tablet {\n\t\ttext-align: left !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.has-text-left-tablet-only {\n\t\ttext-align: left !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.has-text-left-touch {\n\t\ttext-align: left !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.has-text-left-desktop {\n\t\ttext-align: left !important;\n\t}\n}\n@media screen and (max-width: 768px) {\n\t.has-text-right-mobile {\n\t\ttext-align: right !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.has-text-right-tablet {\n\t\ttext-align: right !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.has-text-right-tablet-only {\n\t\ttext-align: right !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.has-text-right-touch {\n\t\ttext-align: right !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.has-text-right-desktop {\n\t\ttext-align: right !important;\n\t}\n}\n.is-capitalized {\n\ttext-transform: capitalize !important;\n}\n.is-lowercase {\n\ttext-transform: lowercase !important;\n}\n.is-uppercase {\n\ttext-transform: uppercase !important;\n}\n.is-italic {\n\tfont-style: italic !important;\n}\n.has-text-white {\n\tcolor: #fff !important;\n}\na.has-text-white:focus,\na.has-text-white:hover {\n\tcolor: #e6e6e6 !important;\n}\n.has-background-white {\n\tbackground-color: #fff !important;\n}\n.has-text-black {\n\tcolor: #0a0a0a !important;\n}\na.has-text-black:focus,\na.has-text-black:hover {\n\tcolor: #000 !important;\n}\n.has-background-black {\n\tbackground-color: #0a0a0a !important;\n}\n.has-text-light {\n\tcolor: #f5f5f5 !important;\n}\na.has-text-light:focus,\na.has-text-light:hover {\n\tcolor: #dbdbdb !important;\n}\n.has-background-light {\n\tbackground-color: #f5f5f5 !important;\n}\n.has-text-dark {\n\tcolor: #363636 !important;\n}\na.has-text-dark:focus,\na.has-text-dark:hover {\n\tcolor: #1c1c1c !important;\n}\n.has-background-dark {\n\tbackground-color: #363636 !important;\n}\n.has-text-primary {\n\tcolor: #454545 !important;\n}\na.has-text-primary:focus,\na.has-text-primary:hover {\n\tcolor: #2c2c2c !important;\n}\n.has-background-primary {\n\tbackground-color: #454545 !important;\n}\n.has-text-link {\n\tcolor: #00d1b2 !important;\n}\na.has-text-link:focus,\na.has-text-link:hover {\n\tcolor: #009e86 !important;\n}\n.has-background-link {\n\tbackground-color: #00d1b2 !important;\n}\n.has-text-info {\n\tcolor: #3298dc !important;\n}\na.has-text-info:focus,\na.has-text-info:hover {\n\tcolor: #207dbc !important;\n}\n.has-background-info {\n\tbackground-color: #3298dc !important;\n}\n.has-text-success {\n\tcolor: #48c774 !important;\n}\na.has-text-success:focus,\na.has-text-success:hover {\n\tcolor: #34a85c !important;\n}\n.has-background-success {\n\tbackground-color: #48c774 !important;\n}\n.has-text-warning {\n\tcolor: #ffdd57 !important;\n}\na.has-text-warning:focus,\na.has-text-warning:hover {\n\tcolor: #ffd324 !important;\n}\n.has-background-warning {\n\tbackground-color: #ffdd57 !important;\n}\n.has-text-danger {\n\tcolor: #f14668 !important;\n}\na.has-text-danger:focus,\na.has-text-danger:hover {\n\tcolor: #ee1742 !important;\n}\n.has-background-danger {\n\tbackground-color: #f14668 !important;\n}\n.has-text-black-bis {\n\tcolor: #121212 !important;\n}\n.has-background-black-bis {\n\tbackground-color: #121212 !important;\n}\n.has-text-black-ter {\n\tcolor: #242424 !important;\n}\n.has-background-black-ter {\n\tbackground-color: #242424 !important;\n}\n.has-text-grey-darker {\n\tcolor: #363636 !important;\n}\n.has-background-grey-darker {\n\tbackground-color: #363636 !important;\n}\n.has-text-grey-dark {\n\tcolor: #4a4a4a !important;\n}\n.has-background-grey-dark {\n\tbackground-color: #4a4a4a !important;\n}\n.has-text-grey {\n\tcolor: #7a7a7a !important;\n}\n.has-background-grey {\n\tbackground-color: #7a7a7a !important;\n}\n.has-text-grey-light {\n\tcolor: #b5b5b5 !important;\n}\n.has-background-grey-light {\n\tbackground-color: #b5b5b5 !important;\n}\n.has-text-grey-lighter {\n\tcolor: #dbdbdb !important;\n}\n.has-background-grey-lighter {\n\tbackground-color: #dbdbdb !important;\n}\n.has-text-white-ter {\n\tcolor: #f5f5f5 !important;\n}\n.has-background-white-ter {\n\tbackground-color: #f5f5f5 !important;\n}\n.has-text-white-bis {\n\tcolor: #fafafa !important;\n}\n.has-background-white-bis {\n\tbackground-color: #fafafa !important;\n}\n.has-text-weight-light {\n\tfont-weight: 300 !important;\n}\n.has-text-weight-normal {\n\tfont-weight: 400 !important;\n}\n.has-text-weight-medium {\n\tfont-weight: 500 !important;\n}\n.has-text-weight-semibold {\n\tfont-weight: 600 !important;\n}\n.has-text-weight-bold {\n\tfont-weight: 700 !important;\n}\n.is-family-primary,\n.is-family-sans-serif,\n.is-family-secondary {\n\tfont-family: Lato, sans-serif !important;\n}\n.is-family-code,\n.is-family-monospace {\n\tfont-family: monospace !important;\n}\n.is-block {\n\tdisplay: block !important;\n}\n@media screen and (max-width: 768px) {\n\t.is-block-mobile {\n\t\tdisplay: block !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.is-block-tablet {\n\t\tdisplay: block !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.is-block-tablet-only {\n\t\tdisplay: block !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.is-block-touch {\n\t\tdisplay: block !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.is-block-desktop {\n\t\tdisplay: block !important;\n\t}\n}\n.is-flex {\n\tdisplay: flex !important;\n}\n@media screen and (max-width: 768px) {\n\t.is-flex-mobile {\n\t\tdisplay: flex !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.is-flex-tablet {\n\t\tdisplay: flex !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.is-flex-tablet-only {\n\t\tdisplay: flex !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.is-flex-touch {\n\t\tdisplay: flex !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.is-flex-desktop {\n\t\tdisplay: flex !important;\n\t}\n}\n.is-inline {\n\tdisplay: inline !important;\n}\n@media screen and (max-width: 768px) {\n\t.is-inline-mobile {\n\t\tdisplay: inline !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.is-inline-tablet {\n\t\tdisplay: inline !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.is-inline-tablet-only {\n\t\tdisplay: inline !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.is-inline-touch {\n\t\tdisplay: inline !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.is-inline-desktop {\n\t\tdisplay: inline !important;\n\t}\n}\n.is-inline-block {\n\tdisplay: inline-block !important;\n}\n@media screen and (max-width: 768px) {\n\t.is-inline-block-mobile {\n\t\tdisplay: inline-block !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.is-inline-block-tablet {\n\t\tdisplay: inline-block !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.is-inline-block-tablet-only {\n\t\tdisplay: inline-block !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.is-inline-block-touch {\n\t\tdisplay: inline-block !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.is-inline-block-desktop {\n\t\tdisplay: inline-block !important;\n\t}\n}\n.is-inline-flex {\n\tdisplay: inline-flex !important;\n}\n@media screen and (max-width: 768px) {\n\t.is-inline-flex-mobile {\n\t\tdisplay: inline-flex !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.is-inline-flex-tablet {\n\t\tdisplay: inline-flex !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.is-inline-flex-tablet-only {\n\t\tdisplay: inline-flex !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.is-inline-flex-touch {\n\t\tdisplay: inline-flex !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.is-inline-flex-desktop {\n\t\tdisplay: inline-flex !important;\n\t}\n}\n.is-hidden {\n\tdisplay: none !important;\n}\n.is-sr-only {\n\tborder: none !important;\n\tclip: rect(0, 0, 0, 0) !important;\n\theight: 0.01em !important;\n\toverflow: hidden !important;\n\tpadding: 0 !important;\n\tposition: absolute !important;\n\twhite-space: nowrap !important;\n\twidth: 0.01em !important;\n}\n@media screen and (max-width: 768px) {\n\t.is-hidden-mobile {\n\t\tdisplay: none !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.is-hidden-tablet {\n\t\tdisplay: none !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.is-hidden-tablet-only {\n\t\tdisplay: none !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.is-hidden-touch {\n\t\tdisplay: none !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.is-hidden-desktop {\n\t\tdisplay: none !important;\n\t}\n}\n.is-invisible {\n\tvisibility: hidden !important;\n}\n@media screen and (max-width: 768px) {\n\t.is-invisible-mobile {\n\t\tvisibility: hidden !important;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.is-invisible-tablet {\n\t\tvisibility: hidden !important;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.is-invisible-tablet-only {\n\t\tvisibility: hidden !important;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.is-invisible-touch {\n\t\tvisibility: hidden !important;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.is-invisible-desktop {\n\t\tvisibility: hidden !important;\n\t}\n}\n.is-marginless {\n\tmargin: 0 !important;\n}\n.is-paddingless {\n\tpadding: 0 !important;\n}\n.is-radiusless {\n\tborder-radius: 0 !important;\n}\n.is-shadowless {\n\tbox-shadow: none !important;\n}\n.is-relative {\n\tposition: relative !important;\n}\n.box {\n\tbackground-color: #fff;\n\tborder-radius: 6px;\n\tbox-shadow: 0 0.5em 1em -0.125em rgba(10, 10, 10, 0.1),\n\t\t0 0 0 1px rgba(10, 10, 10, 0.02);\n\tcolor: #4a4a4a;\n\tdisplay: block;\n\tpadding: 1.25rem;\n}\na.box:focus,\na.box:hover {\n\tbox-shadow: 0 0.5em 1em -0.125em rgba(10, 10, 10, 0.1), 0 0 0 1px #00d1b2;\n}\na.box:active {\n\tbox-shadow: inset 0 1px 2px rgba(10, 10, 10, 0.2), 0 0 0 1px #00d1b2;\n}\n.button {\n\tbackground-color: #fff;\n\tborder-color: #dbdbdb;\n\tborder-width: 1px;\n\tcolor: #363636;\n\tcursor: pointer;\n\tjustify-content: center;\n\tpadding: calc(0.5em - 1px) 1em;\n\ttext-align: center;\n\twhite-space: nowrap;\n}\n.button strong {\n\tcolor: inherit;\n}\n.button .icon,\n.button .icon.is-large,\n.button .icon.is-medium,\n.button .icon.is-small {\n\theight: 1.5em;\n\twidth: 1.5em;\n}\n.button .icon:first-child:not(:last-child) {\n\tmargin-left: calc(-0.5em - 1px);\n\tmargin-right: 0.25em;\n}\n.button .icon:last-child:not(:first-child) {\n\tmargin-left: 0.25em;\n\tmargin-right: calc(-0.5em - 1px);\n}\n.button .icon:first-child:last-child {\n\tmargin-left: calc(-0.5em - 1px);\n\tmargin-right: calc(-0.5em - 1px);\n}\n.button.is-hovered,\n.button:hover {\n\tborder-color: #b5b5b5;\n\tcolor: #363636;\n}\n.button.is-focused,\n.button:focus {\n\tborder-color: #3273dc;\n\tcolor: #363636;\n}\n.button.is-focused:not(:active),\n.button:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(0, 209, 178, 0.25);\n}\n.button.is-active,\n.button:active {\n\tborder-color: #4a4a4a;\n\tcolor: #363636;\n}\n.button.is-text {\n\tbackground-color: transparent;\n\tborder-color: transparent;\n\tcolor: #4a4a4a;\n\ttext-decoration: underline;\n}\n.button.is-text.is-focused,\n.button.is-text.is-hovered,\n.button.is-text:focus,\n.button.is-text:hover {\n\tbackground-color: #f5f5f5;\n\tcolor: #363636;\n}\n.button.is-text.is-active,\n.button.is-text:active {\n\tbackground-color: #e8e8e8;\n\tcolor: #363636;\n}\n.button.is-text[disabled],\nfieldset[disabled] .button.is-text {\n\tbackground-color: transparent;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-white {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tcolor: #0a0a0a;\n}\n.button.is-white.is-hovered,\n.button.is-white:hover {\n\tbackground-color: #f9f9f9;\n\tborder-color: transparent;\n\tcolor: #0a0a0a;\n}\n.button.is-white.is-focused,\n.button.is-white:focus {\n\tborder-color: transparent;\n\tcolor: #0a0a0a;\n}\n.button.is-white.is-focused:not(:active),\n.button.is-white:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em hsla(0, 0%, 100%, 0.25);\n}\n.button.is-white.is-active,\n.button.is-white:active {\n\tbackground-color: #f2f2f2;\n\tborder-color: transparent;\n\tcolor: #0a0a0a;\n}\n.button.is-white[disabled],\nfieldset[disabled] .button.is-white {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-white.is-inverted {\n\tbackground-color: #0a0a0a;\n\tcolor: #fff;\n}\n.button.is-white.is-inverted.is-hovered,\n.button.is-white.is-inverted:hover {\n\tbackground-color: #000;\n}\n.button.is-white.is-inverted[disabled],\nfieldset[disabled] .button.is-white.is-inverted {\n\tbackground-color: #0a0a0a;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-white.is-loading:after {\n\tborder-color: transparent transparent #0a0a0a #0a0a0a !important;\n}\n.button.is-white.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tcolor: #fff;\n}\n.button.is-white.is-outlined.is-focused,\n.button.is-white.is-outlined.is-hovered,\n.button.is-white.is-outlined:focus,\n.button.is-white.is-outlined:hover {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #0a0a0a;\n}\n.button.is-white.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-white.is-outlined.is-loading.is-focused:after,\n.button.is-white.is-outlined.is-loading.is-hovered:after,\n.button.is-white.is-outlined.is-loading:focus:after,\n.button.is-white.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #0a0a0a #0a0a0a !important;\n}\n.button.is-white.is-outlined[disabled],\nfieldset[disabled] .button.is-white.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-white.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #0a0a0a;\n\tcolor: #0a0a0a;\n}\n.button.is-white.is-inverted.is-outlined.is-focused,\n.button.is-white.is-inverted.is-outlined.is-hovered,\n.button.is-white.is-inverted.is-outlined:focus,\n.button.is-white.is-inverted.is-outlined:hover {\n\tbackground-color: #0a0a0a;\n\tcolor: #fff;\n}\n.button.is-white.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-white.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-white.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-white.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-white.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-white.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #0a0a0a;\n\tbox-shadow: none;\n\tcolor: #0a0a0a;\n}\n.button.is-black {\n\tbackground-color: #0a0a0a;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-black.is-hovered,\n.button.is-black:hover {\n\tbackground-color: #040404;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-black.is-focused,\n.button.is-black:focus {\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-black.is-focused:not(:active),\n.button.is-black:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(10, 10, 10, 0.25);\n}\n.button.is-black.is-active,\n.button.is-black:active {\n\tbackground-color: #000;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-black[disabled],\nfieldset[disabled] .button.is-black {\n\tbackground-color: #0a0a0a;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-black.is-inverted {\n\tbackground-color: #fff;\n\tcolor: #0a0a0a;\n}\n.button.is-black.is-inverted.is-hovered,\n.button.is-black.is-inverted:hover {\n\tbackground-color: #f2f2f2;\n}\n.button.is-black.is-inverted[disabled],\nfieldset[disabled] .button.is-black.is-inverted {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #0a0a0a;\n}\n.button.is-black.is-loading:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-black.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #0a0a0a;\n\tcolor: #0a0a0a;\n}\n.button.is-black.is-outlined.is-focused,\n.button.is-black.is-outlined.is-hovered,\n.button.is-black.is-outlined:focus,\n.button.is-black.is-outlined:hover {\n\tbackground-color: #0a0a0a;\n\tborder-color: #0a0a0a;\n\tcolor: #fff;\n}\n.button.is-black.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #0a0a0a #0a0a0a !important;\n}\n.button.is-black.is-outlined.is-loading.is-focused:after,\n.button.is-black.is-outlined.is-loading.is-hovered:after,\n.button.is-black.is-outlined.is-loading:focus:after,\n.button.is-black.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-black.is-outlined[disabled],\nfieldset[disabled] .button.is-black.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #0a0a0a;\n\tbox-shadow: none;\n\tcolor: #0a0a0a;\n}\n.button.is-black.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tcolor: #fff;\n}\n.button.is-black.is-inverted.is-outlined.is-focused,\n.button.is-black.is-inverted.is-outlined.is-hovered,\n.button.is-black.is-inverted.is-outlined:focus,\n.button.is-black.is-inverted.is-outlined:hover {\n\tbackground-color: #fff;\n\tcolor: #0a0a0a;\n}\n.button.is-black.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-black.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-black.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-black.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #0a0a0a #0a0a0a !important;\n}\n.button.is-black.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-black.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-light {\n\tbackground-color: #f5f5f5;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-light.is-hovered,\n.button.is-light:hover {\n\tbackground-color: #eee;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-light.is-focused,\n.button.is-light:focus {\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-light.is-focused:not(:active),\n.button.is-light:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em hsla(0, 0%, 96.1%, 0.25);\n}\n.button.is-light.is-active,\n.button.is-light:active {\n\tbackground-color: #e8e8e8;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-light[disabled],\nfieldset[disabled] .button.is-light {\n\tbackground-color: #f5f5f5;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-light.is-inverted {\n\tcolor: #f5f5f5;\n}\n.button.is-light.is-inverted,\n.button.is-light.is-inverted.is-hovered,\n.button.is-light.is-inverted:hover {\n\tbackground-color: rgba(0, 0, 0, 0.7);\n}\n.button.is-light.is-inverted[disabled],\nfieldset[disabled] .button.is-light.is-inverted {\n\tbackground-color: rgba(0, 0, 0, 0.7);\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #f5f5f5;\n}\n.button.is-light.is-loading:after {\n\tborder-color: transparent transparent rgba(0, 0, 0, 0.7) rgba(0, 0, 0, 0.7) !important;\n}\n.button.is-light.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #f5f5f5;\n\tcolor: #f5f5f5;\n}\n.button.is-light.is-outlined.is-focused,\n.button.is-light.is-outlined.is-hovered,\n.button.is-light.is-outlined:focus,\n.button.is-light.is-outlined:hover {\n\tbackground-color: #f5f5f5;\n\tborder-color: #f5f5f5;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-light.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #f5f5f5 #f5f5f5 !important;\n}\n.button.is-light.is-outlined.is-loading.is-focused:after,\n.button.is-light.is-outlined.is-loading.is-hovered:after,\n.button.is-light.is-outlined.is-loading:focus:after,\n.button.is-light.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent rgba(0, 0, 0, 0.7) rgba(0, 0, 0, 0.7) !important;\n}\n.button.is-light.is-outlined[disabled],\nfieldset[disabled] .button.is-light.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #f5f5f5;\n\tbox-shadow: none;\n\tcolor: #f5f5f5;\n}\n.button.is-light.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: rgba(0, 0, 0, 0.7);\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-light.is-inverted.is-outlined.is-focused,\n.button.is-light.is-inverted.is-outlined.is-hovered,\n.button.is-light.is-inverted.is-outlined:focus,\n.button.is-light.is-inverted.is-outlined:hover {\n\tbackground-color: rgba(0, 0, 0, 0.7);\n\tcolor: #f5f5f5;\n}\n.button.is-light.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-light.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-light.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-light.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #f5f5f5 #f5f5f5 !important;\n}\n.button.is-light.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-light.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: rgba(0, 0, 0, 0.7);\n\tbox-shadow: none;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-dark {\n\tbackground-color: #363636;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-dark.is-hovered,\n.button.is-dark:hover {\n\tbackground-color: #2f2f2f;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-dark.is-focused,\n.button.is-dark:focus {\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-dark.is-focused:not(:active),\n.button.is-dark:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(54, 54, 54, 0.25);\n}\n.button.is-dark.is-active,\n.button.is-dark:active {\n\tbackground-color: #292929;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-dark[disabled],\nfieldset[disabled] .button.is-dark {\n\tbackground-color: #363636;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-dark.is-inverted {\n\tbackground-color: #fff;\n\tcolor: #363636;\n}\n.button.is-dark.is-inverted.is-hovered,\n.button.is-dark.is-inverted:hover {\n\tbackground-color: #f2f2f2;\n}\n.button.is-dark.is-inverted[disabled],\nfieldset[disabled] .button.is-dark.is-inverted {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #363636;\n}\n.button.is-dark.is-loading:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-dark.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #363636;\n\tcolor: #363636;\n}\n.button.is-dark.is-outlined.is-focused,\n.button.is-dark.is-outlined.is-hovered,\n.button.is-dark.is-outlined:focus,\n.button.is-dark.is-outlined:hover {\n\tbackground-color: #363636;\n\tborder-color: #363636;\n\tcolor: #fff;\n}\n.button.is-dark.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #363636 #363636 !important;\n}\n.button.is-dark.is-outlined.is-loading.is-focused:after,\n.button.is-dark.is-outlined.is-loading.is-hovered:after,\n.button.is-dark.is-outlined.is-loading:focus:after,\n.button.is-dark.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-dark.is-outlined[disabled],\nfieldset[disabled] .button.is-dark.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #363636;\n\tbox-shadow: none;\n\tcolor: #363636;\n}\n.button.is-dark.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tcolor: #fff;\n}\n.button.is-dark.is-inverted.is-outlined.is-focused,\n.button.is-dark.is-inverted.is-outlined.is-hovered,\n.button.is-dark.is-inverted.is-outlined:focus,\n.button.is-dark.is-inverted.is-outlined:hover {\n\tbackground-color: #fff;\n\tcolor: #363636;\n}\n.button.is-dark.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-dark.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-dark.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-dark.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #363636 #363636 !important;\n}\n.button.is-dark.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-dark.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-primary {\n\tbackground-color: #454545;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-primary.is-hovered,\n.button.is-primary:hover {\n\tbackground-color: #3f3f3f;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-primary.is-focused,\n.button.is-primary:focus {\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-primary.is-focused:not(:active),\n.button.is-primary:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(69, 69, 69, 0.25);\n}\n.button.is-primary.is-active,\n.button.is-primary:active {\n\tbackground-color: #383838;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-primary[disabled],\nfieldset[disabled] .button.is-primary {\n\tbackground-color: #454545;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-primary.is-inverted {\n\tbackground-color: #fff;\n\tcolor: #454545;\n}\n.button.is-primary.is-inverted.is-hovered,\n.button.is-primary.is-inverted:hover {\n\tbackground-color: #f2f2f2;\n}\n.button.is-primary.is-inverted[disabled],\nfieldset[disabled] .button.is-primary.is-inverted {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #454545;\n}\n.button.is-primary.is-loading:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-primary.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #454545;\n\tcolor: #454545;\n}\n.button.is-primary.is-outlined.is-focused,\n.button.is-primary.is-outlined.is-hovered,\n.button.is-primary.is-outlined:focus,\n.button.is-primary.is-outlined:hover {\n\tbackground-color: #454545;\n\tborder-color: #454545;\n\tcolor: #fff;\n}\n.button.is-primary.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #454545 #454545 !important;\n}\n.button.is-primary.is-outlined.is-loading.is-focused:after,\n.button.is-primary.is-outlined.is-loading.is-hovered:after,\n.button.is-primary.is-outlined.is-loading:focus:after,\n.button.is-primary.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-primary.is-outlined[disabled],\nfieldset[disabled] .button.is-primary.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #454545;\n\tbox-shadow: none;\n\tcolor: #454545;\n}\n.button.is-primary.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tcolor: #fff;\n}\n.button.is-primary.is-inverted.is-outlined.is-focused,\n.button.is-primary.is-inverted.is-outlined.is-hovered,\n.button.is-primary.is-inverted.is-outlined:focus,\n.button.is-primary.is-inverted.is-outlined:hover {\n\tbackground-color: #fff;\n\tcolor: #454545;\n}\n.button.is-primary.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-primary.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-primary.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-primary.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #454545 #454545 !important;\n}\n.button.is-primary.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-primary.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-primary.is-light {\n\tbackground-color: #f5f5f5;\n\tcolor: #858585;\n}\n.button.is-primary.is-light.is-hovered,\n.button.is-primary.is-light:hover {\n\tbackground-color: #eee;\n\tborder-color: transparent;\n\tcolor: #858585;\n}\n.button.is-primary.is-light.is-active,\n.button.is-primary.is-light:active {\n\tbackground-color: #e8e8e8;\n\tborder-color: transparent;\n\tcolor: #858585;\n}\n.button.is-link {\n\tbackground-color: #00d1b2;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-link.is-hovered,\n.button.is-link:hover {\n\tbackground-color: #00c4a7;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-link.is-focused,\n.button.is-link:focus {\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-link.is-focused:not(:active),\n.button.is-link:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(0, 209, 178, 0.25);\n}\n.button.is-link.is-active,\n.button.is-link:active {\n\tbackground-color: #00b89c;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-link[disabled],\nfieldset[disabled] .button.is-link {\n\tbackground-color: #00d1b2;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-link.is-inverted {\n\tbackground-color: #fff;\n\tcolor: #00d1b2;\n}\n.button.is-link.is-inverted.is-hovered,\n.button.is-link.is-inverted:hover {\n\tbackground-color: #f2f2f2;\n}\n.button.is-link.is-inverted[disabled],\nfieldset[disabled] .button.is-link.is-inverted {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #00d1b2;\n}\n.button.is-link.is-loading:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-link.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #00d1b2;\n\tcolor: #00d1b2;\n}\n.button.is-link.is-outlined.is-focused,\n.button.is-link.is-outlined.is-hovered,\n.button.is-link.is-outlined:focus,\n.button.is-link.is-outlined:hover {\n\tbackground-color: #00d1b2;\n\tborder-color: #00d1b2;\n\tcolor: #fff;\n}\n.button.is-link.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #00d1b2 #00d1b2 !important;\n}\n.button.is-link.is-outlined.is-loading.is-focused:after,\n.button.is-link.is-outlined.is-loading.is-hovered:after,\n.button.is-link.is-outlined.is-loading:focus:after,\n.button.is-link.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-link.is-outlined[disabled],\nfieldset[disabled] .button.is-link.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #00d1b2;\n\tbox-shadow: none;\n\tcolor: #00d1b2;\n}\n.button.is-link.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tcolor: #fff;\n}\n.button.is-link.is-inverted.is-outlined.is-focused,\n.button.is-link.is-inverted.is-outlined.is-hovered,\n.button.is-link.is-inverted.is-outlined:focus,\n.button.is-link.is-inverted.is-outlined:hover {\n\tbackground-color: #fff;\n\tcolor: #00d1b2;\n}\n.button.is-link.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-link.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-link.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-link.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #00d1b2 #00d1b2 !important;\n}\n.button.is-link.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-link.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-link.is-light {\n\tbackground-color: #ebfffc;\n\tcolor: #00947e;\n}\n.button.is-link.is-light.is-hovered,\n.button.is-link.is-light:hover {\n\tbackground-color: #defffa;\n\tborder-color: transparent;\n\tcolor: #00947e;\n}\n.button.is-link.is-light.is-active,\n.button.is-link.is-light:active {\n\tbackground-color: #d1fff8;\n\tborder-color: transparent;\n\tcolor: #00947e;\n}\n.button.is-info {\n\tbackground-color: #3298dc;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-info.is-hovered,\n.button.is-info:hover {\n\tbackground-color: #2793da;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-info.is-focused,\n.button.is-info:focus {\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-info.is-focused:not(:active),\n.button.is-info:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(50, 152, 220, 0.25);\n}\n.button.is-info.is-active,\n.button.is-info:active {\n\tbackground-color: #238cd1;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-info[disabled],\nfieldset[disabled] .button.is-info {\n\tbackground-color: #3298dc;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-info.is-inverted {\n\tbackground-color: #fff;\n\tcolor: #3298dc;\n}\n.button.is-info.is-inverted.is-hovered,\n.button.is-info.is-inverted:hover {\n\tbackground-color: #f2f2f2;\n}\n.button.is-info.is-inverted[disabled],\nfieldset[disabled] .button.is-info.is-inverted {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #3298dc;\n}\n.button.is-info.is-loading:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-info.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #3298dc;\n\tcolor: #3298dc;\n}\n.button.is-info.is-outlined.is-focused,\n.button.is-info.is-outlined.is-hovered,\n.button.is-info.is-outlined:focus,\n.button.is-info.is-outlined:hover {\n\tbackground-color: #3298dc;\n\tborder-color: #3298dc;\n\tcolor: #fff;\n}\n.button.is-info.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #3298dc #3298dc !important;\n}\n.button.is-info.is-outlined.is-loading.is-focused:after,\n.button.is-info.is-outlined.is-loading.is-hovered:after,\n.button.is-info.is-outlined.is-loading:focus:after,\n.button.is-info.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-info.is-outlined[disabled],\nfieldset[disabled] .button.is-info.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #3298dc;\n\tbox-shadow: none;\n\tcolor: #3298dc;\n}\n.button.is-info.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tcolor: #fff;\n}\n.button.is-info.is-inverted.is-outlined.is-focused,\n.button.is-info.is-inverted.is-outlined.is-hovered,\n.button.is-info.is-inverted.is-outlined:focus,\n.button.is-info.is-inverted.is-outlined:hover {\n\tbackground-color: #fff;\n\tcolor: #3298dc;\n}\n.button.is-info.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-info.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-info.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-info.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #3298dc #3298dc !important;\n}\n.button.is-info.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-info.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-info.is-light {\n\tbackground-color: #eef6fc;\n\tcolor: #1d72aa;\n}\n.button.is-info.is-light.is-hovered,\n.button.is-info.is-light:hover {\n\tbackground-color: #e3f1fa;\n\tborder-color: transparent;\n\tcolor: #1d72aa;\n}\n.button.is-info.is-light.is-active,\n.button.is-info.is-light:active {\n\tbackground-color: #d8ebf8;\n\tborder-color: transparent;\n\tcolor: #1d72aa;\n}\n.button.is-success {\n\tbackground-color: #48c774;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-success.is-hovered,\n.button.is-success:hover {\n\tbackground-color: #3ec46d;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-success.is-focused,\n.button.is-success:focus {\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-success.is-focused:not(:active),\n.button.is-success:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(72, 199, 116, 0.25);\n}\n.button.is-success.is-active,\n.button.is-success:active {\n\tbackground-color: #3abb67;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-success[disabled],\nfieldset[disabled] .button.is-success {\n\tbackground-color: #48c774;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-success.is-inverted {\n\tbackground-color: #fff;\n\tcolor: #48c774;\n}\n.button.is-success.is-inverted.is-hovered,\n.button.is-success.is-inverted:hover {\n\tbackground-color: #f2f2f2;\n}\n.button.is-success.is-inverted[disabled],\nfieldset[disabled] .button.is-success.is-inverted {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #48c774;\n}\n.button.is-success.is-loading:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-success.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #48c774;\n\tcolor: #48c774;\n}\n.button.is-success.is-outlined.is-focused,\n.button.is-success.is-outlined.is-hovered,\n.button.is-success.is-outlined:focus,\n.button.is-success.is-outlined:hover {\n\tbackground-color: #48c774;\n\tborder-color: #48c774;\n\tcolor: #fff;\n}\n.button.is-success.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #48c774 #48c774 !important;\n}\n.button.is-success.is-outlined.is-loading.is-focused:after,\n.button.is-success.is-outlined.is-loading.is-hovered:after,\n.button.is-success.is-outlined.is-loading:focus:after,\n.button.is-success.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-success.is-outlined[disabled],\nfieldset[disabled] .button.is-success.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #48c774;\n\tbox-shadow: none;\n\tcolor: #48c774;\n}\n.button.is-success.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tcolor: #fff;\n}\n.button.is-success.is-inverted.is-outlined.is-focused,\n.button.is-success.is-inverted.is-outlined.is-hovered,\n.button.is-success.is-inverted.is-outlined:focus,\n.button.is-success.is-inverted.is-outlined:hover {\n\tbackground-color: #fff;\n\tcolor: #48c774;\n}\n.button.is-success.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-success.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-success.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-success.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #48c774 #48c774 !important;\n}\n.button.is-success.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-success.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-success.is-light {\n\tbackground-color: #effaf3;\n\tcolor: #257942;\n}\n.button.is-success.is-light.is-hovered,\n.button.is-success.is-light:hover {\n\tbackground-color: #e6f7ec;\n\tborder-color: transparent;\n\tcolor: #257942;\n}\n.button.is-success.is-light.is-active,\n.button.is-success.is-light:active {\n\tbackground-color: #dcf4e4;\n\tborder-color: transparent;\n\tcolor: #257942;\n}\n.button.is-warning {\n\tbackground-color: #ffdd57;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-warning.is-hovered,\n.button.is-warning:hover {\n\tbackground-color: #ffdb4a;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-warning.is-focused,\n.button.is-warning:focus {\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-warning.is-focused:not(:active),\n.button.is-warning:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(255, 221, 87, 0.25);\n}\n.button.is-warning.is-active,\n.button.is-warning:active {\n\tbackground-color: #ffd83d;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-warning[disabled],\nfieldset[disabled] .button.is-warning {\n\tbackground-color: #ffdd57;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-warning.is-inverted {\n\tcolor: #ffdd57;\n}\n.button.is-warning.is-inverted,\n.button.is-warning.is-inverted.is-hovered,\n.button.is-warning.is-inverted:hover {\n\tbackground-color: rgba(0, 0, 0, 0.7);\n}\n.button.is-warning.is-inverted[disabled],\nfieldset[disabled] .button.is-warning.is-inverted {\n\tbackground-color: rgba(0, 0, 0, 0.7);\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #ffdd57;\n}\n.button.is-warning.is-loading:after {\n\tborder-color: transparent transparent rgba(0, 0, 0, 0.7) rgba(0, 0, 0, 0.7) !important;\n}\n.button.is-warning.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #ffdd57;\n\tcolor: #ffdd57;\n}\n.button.is-warning.is-outlined.is-focused,\n.button.is-warning.is-outlined.is-hovered,\n.button.is-warning.is-outlined:focus,\n.button.is-warning.is-outlined:hover {\n\tbackground-color: #ffdd57;\n\tborder-color: #ffdd57;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-warning.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #ffdd57 #ffdd57 !important;\n}\n.button.is-warning.is-outlined.is-loading.is-focused:after,\n.button.is-warning.is-outlined.is-loading.is-hovered:after,\n.button.is-warning.is-outlined.is-loading:focus:after,\n.button.is-warning.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent rgba(0, 0, 0, 0.7) rgba(0, 0, 0, 0.7) !important;\n}\n.button.is-warning.is-outlined[disabled],\nfieldset[disabled] .button.is-warning.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #ffdd57;\n\tbox-shadow: none;\n\tcolor: #ffdd57;\n}\n.button.is-warning.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: rgba(0, 0, 0, 0.7);\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-warning.is-inverted.is-outlined.is-focused,\n.button.is-warning.is-inverted.is-outlined.is-hovered,\n.button.is-warning.is-inverted.is-outlined:focus,\n.button.is-warning.is-inverted.is-outlined:hover {\n\tbackground-color: rgba(0, 0, 0, 0.7);\n\tcolor: #ffdd57;\n}\n.button.is-warning.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-warning.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-warning.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-warning.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #ffdd57 #ffdd57 !important;\n}\n.button.is-warning.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-warning.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: rgba(0, 0, 0, 0.7);\n\tbox-shadow: none;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.button.is-warning.is-light {\n\tbackground-color: #fffbeb;\n\tcolor: #947600;\n}\n.button.is-warning.is-light.is-hovered,\n.button.is-warning.is-light:hover {\n\tbackground-color: #fff8de;\n\tborder-color: transparent;\n\tcolor: #947600;\n}\n.button.is-warning.is-light.is-active,\n.button.is-warning.is-light:active {\n\tbackground-color: #fff6d1;\n\tborder-color: transparent;\n\tcolor: #947600;\n}\n.button.is-danger {\n\tbackground-color: #f14668;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-danger.is-hovered,\n.button.is-danger:hover {\n\tbackground-color: #f03a5f;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-danger.is-focused,\n.button.is-danger:focus {\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-danger.is-focused:not(:active),\n.button.is-danger:focus:not(:active) {\n\tbox-shadow: 0 0 0 0.125em rgba(241, 70, 104, 0.25);\n}\n.button.is-danger.is-active,\n.button.is-danger:active {\n\tbackground-color: #ef2e55;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.button.is-danger[disabled],\nfieldset[disabled] .button.is-danger {\n\tbackground-color: #f14668;\n\tborder-color: transparent;\n\tbox-shadow: none;\n}\n.button.is-danger.is-inverted {\n\tbackground-color: #fff;\n\tcolor: #f14668;\n}\n.button.is-danger.is-inverted.is-hovered,\n.button.is-danger.is-inverted:hover {\n\tbackground-color: #f2f2f2;\n}\n.button.is-danger.is-inverted[disabled],\nfieldset[disabled] .button.is-danger.is-inverted {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tcolor: #f14668;\n}\n.button.is-danger.is-loading:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-danger.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #f14668;\n\tcolor: #f14668;\n}\n.button.is-danger.is-outlined.is-focused,\n.button.is-danger.is-outlined.is-hovered,\n.button.is-danger.is-outlined:focus,\n.button.is-danger.is-outlined:hover {\n\tbackground-color: #f14668;\n\tborder-color: #f14668;\n\tcolor: #fff;\n}\n.button.is-danger.is-outlined.is-loading:after {\n\tborder-color: transparent transparent #f14668 #f14668 !important;\n}\n.button.is-danger.is-outlined.is-loading.is-focused:after,\n.button.is-danger.is-outlined.is-loading.is-hovered:after,\n.button.is-danger.is-outlined.is-loading:focus:after,\n.button.is-danger.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #fff #fff !important;\n}\n.button.is-danger.is-outlined[disabled],\nfieldset[disabled] .button.is-danger.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #f14668;\n\tbox-shadow: none;\n\tcolor: #f14668;\n}\n.button.is-danger.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tcolor: #fff;\n}\n.button.is-danger.is-inverted.is-outlined.is-focused,\n.button.is-danger.is-inverted.is-outlined.is-hovered,\n.button.is-danger.is-inverted.is-outlined:focus,\n.button.is-danger.is-inverted.is-outlined:hover {\n\tbackground-color: #fff;\n\tcolor: #f14668;\n}\n.button.is-danger.is-inverted.is-outlined.is-loading.is-focused:after,\n.button.is-danger.is-inverted.is-outlined.is-loading.is-hovered:after,\n.button.is-danger.is-inverted.is-outlined.is-loading:focus:after,\n.button.is-danger.is-inverted.is-outlined.is-loading:hover:after {\n\tborder-color: transparent transparent #f14668 #f14668 !important;\n}\n.button.is-danger.is-inverted.is-outlined[disabled],\nfieldset[disabled] .button.is-danger.is-inverted.is-outlined {\n\tbackground-color: transparent;\n\tborder-color: #fff;\n\tbox-shadow: none;\n\tcolor: #fff;\n}\n.button.is-danger.is-light {\n\tbackground-color: #feecf0;\n\tcolor: #cc0f35;\n}\n.button.is-danger.is-light.is-hovered,\n.button.is-danger.is-light:hover {\n\tbackground-color: #fde0e6;\n\tborder-color: transparent;\n\tcolor: #cc0f35;\n}\n.button.is-danger.is-light.is-active,\n.button.is-danger.is-light:active {\n\tbackground-color: #fcd4dc;\n\tborder-color: transparent;\n\tcolor: #cc0f35;\n}\n.button.is-small {\n\tborder-radius: 2px;\n\tfont-size: 0.75rem;\n}\n.button.is-normal {\n\tfont-size: 1rem;\n}\n.button.is-medium {\n\tfont-size: 1.25rem;\n}\n.button.is-large {\n\tfont-size: 1.5rem;\n}\n.button[disabled],\nfieldset[disabled] .button {\n\tbackground-color: #fff;\n\tborder-color: #dbdbdb;\n\tbox-shadow: none;\n\topacity: 0.5;\n}\n.button.is-fullwidth {\n\tdisplay: flex;\n\twidth: 100%;\n}\n.button.is-loading {\n\tcolor: transparent !important;\n\tpointer-events: none;\n}\n.button.is-loading:after {\n\tposition: absolute;\n\tleft: calc(50% - 0.5em);\n\ttop: calc(50% - 0.5em);\n\tposition: absolute !important;\n}\n.button.is-static {\n\tbackground-color: #f5f5f5;\n\tborder-color: #dbdbdb;\n\tcolor: #7a7a7a;\n\tbox-shadow: none;\n\tpointer-events: none;\n}\n.button.is-rounded {\n\tborder-radius: 290486px;\n\tpadding-left: 1.25em;\n\tpadding-right: 1.25em;\n}\n.buttons {\n\talign-items: center;\n\tdisplay: flex;\n\tflex-wrap: wrap;\n\tjustify-content: flex-start;\n}\n.buttons .button {\n\tmargin-bottom: 0.5rem;\n}\n.buttons .button:not(:last-child):not(.is-fullwidth) {\n\tmargin-right: 0.5rem;\n}\n.buttons:last-child {\n\tmargin-bottom: -0.5rem;\n}\n.buttons:not(:last-child) {\n\tmargin-bottom: 1rem;\n}\n.buttons.are-small .button:not(.is-normal):not(.is-medium):not(.is-large) {\n\tborder-radius: 2px;\n\tfont-size: 0.75rem;\n}\n.buttons.are-medium .button:not(.is-small):not(.is-normal):not(.is-large) {\n\tfont-size: 1.25rem;\n}\n.buttons.are-large .button:not(.is-small):not(.is-normal):not(.is-medium) {\n\tfont-size: 1.5rem;\n}\n.buttons.has-addons .button:not(:first-child) {\n\tborder-bottom-left-radius: 0;\n\tborder-top-left-radius: 0;\n}\n.buttons.has-addons .button:not(:last-child) {\n\tborder-bottom-right-radius: 0;\n\tborder-top-right-radius: 0;\n\tmargin-right: -1px;\n}\n.buttons.has-addons .button:last-child {\n\tmargin-right: 0;\n}\n.buttons.has-addons .button.is-hovered,\n.buttons.has-addons .button:hover {\n\tz-index: 2;\n}\n.buttons.has-addons .button.is-active,\n.buttons.has-addons .button.is-focused,\n.buttons.has-addons .button.is-selected,\n.buttons.has-addons .button:active,\n.buttons.has-addons .button:focus {\n\tz-index: 3;\n}\n.buttons.has-addons .button.is-active:hover,\n.buttons.has-addons .button.is-focused:hover,\n.buttons.has-addons .button.is-selected:hover,\n.buttons.has-addons .button:active:hover,\n.buttons.has-addons .button:focus:hover {\n\tz-index: 4;\n}\n.buttons.has-addons .button.is-expanded {\n\tflex-grow: 1;\n\tflex-shrink: 1;\n}\n.buttons.is-centered {\n\tjustify-content: center;\n}\n.buttons.is-centered:not(.has-addons) .button:not(.is-fullwidth) {\n\tmargin-left: 0.25rem;\n\tmargin-right: 0.25rem;\n}\n.buttons.is-right {\n\tjustify-content: flex-end;\n}\n.buttons.is-right:not(.has-addons) .button:not(.is-fullwidth) {\n\tmargin-left: 0.25rem;\n\tmargin-right: 0.25rem;\n}\n.container {\n\tflex-grow: 1;\n\tmargin: 0 auto;\n\tposition: relative;\n\twidth: auto;\n}\n.container.is-fluid {\n\tmax-width: none;\n\tpadding-left: 32px;\n\tpadding-right: 32px;\n\twidth: 100%;\n}\n@media screen and (min-width: 1024px) {\n\t.container {\n\t\tmax-width: 960px;\n\t}\n}\n.content li + li {\n\tmargin-top: 0.25em;\n}\n.content blockquote:not(:last-child),\n.content dl:not(:last-child),\n.content ol:not(:last-child),\n.content p:not(:last-child),\n.content pre:not(:last-child),\n.content table:not(:last-child),\n.content ul:not(:last-child) {\n\tmargin-bottom: 1em;\n}\n.content h1,\n.content h2,\n.content h3,\n.content h4,\n.content h5,\n.content h6 {\n\tcolor: #363636;\n\tfont-weight: 600;\n\tline-height: 1.125;\n}\n.content h1 {\n\tfont-size: 2em;\n\tmargin-bottom: 0.5em;\n}\n.content h1:not(:first-child) {\n\tmargin-top: 1em;\n}\n.content h2 {\n\tfont-size: 1.75em;\n\tmargin-bottom: 0.5714em;\n}\n.content h2:not(:first-child) {\n\tmargin-top: 1.1428em;\n}\n.content h3 {\n\tfont-size: 1.5em;\n\tmargin-bottom: 0.6666em;\n}\n.content h3:not(:first-child) {\n\tmargin-top: 1.3333em;\n}\n.content h4 {\n\tfont-size: 1.25em;\n\tmargin-bottom: 0.8em;\n}\n.content h5 {\n\tfont-size: 1.125em;\n\tmargin-bottom: 0.8888em;\n}\n.content h6 {\n\tfont-size: 1em;\n\tmargin-bottom: 1em;\n}\n.content blockquote {\n\tbackground-color: #f5f5f5;\n\tborder-left: 5px solid #dbdbdb;\n\tpadding: 1.25em 1.5em;\n}\n.content ol {\n\tlist-style-position: outside;\n\tmargin-left: 2em;\n\tmargin-top: 1em;\n}\n.content ol:not([type]) {\n\tlist-style-type: decimal;\n}\n.content ol:not([type]).is-lower-alpha {\n\tlist-style-type: lower-alpha;\n}\n.content ol:not([type]).is-lower-roman {\n\tlist-style-type: lower-roman;\n}\n.content ol:not([type]).is-upper-alpha {\n\tlist-style-type: upper-alpha;\n}\n.content ol:not([type]).is-upper-roman {\n\tlist-style-type: upper-roman;\n}\n.content ul {\n\tlist-style: disc outside;\n\tmargin-left: 2em;\n\tmargin-top: 1em;\n}\n.content ul ul {\n\tlist-style-type: circle;\n\tmargin-top: 0.5em;\n}\n.content ul ul ul {\n\tlist-style-type: square;\n}\n.content dd {\n\tmargin-left: 2em;\n}\n.content figure {\n\tmargin-left: 2em;\n\tmargin-right: 2em;\n\ttext-align: center;\n}\n.content figure:not(:first-child) {\n\tmargin-top: 2em;\n}\n.content figure:not(:last-child) {\n\tmargin-bottom: 2em;\n}\n.content figure img {\n\tdisplay: inline-block;\n}\n.content figure figcaption {\n\tfont-style: italic;\n}\n.content pre {\n\t-webkit-overflow-scrolling: touch;\n\toverflow-x: auto;\n\tpadding: 1.25em 1.5em;\n\twhite-space: pre;\n\tword-wrap: normal;\n}\n.content sub,\n.content sup {\n\tfont-size: 75%;\n}\n.content table {\n\twidth: 100%;\n}\n.content table td,\n.content table th {\n\tborder: solid #dbdbdb;\n\tborder-width: 0 0 1px;\n\tpadding: 0.5em 0.75em;\n\tvertical-align: top;\n}\n.content table th {\n\tcolor: #363636;\n}\n.content table th:not([align]) {\n\ttext-align: left;\n}\n.content table thead td,\n.content table thead th {\n\tborder-width: 0 0 2px;\n\tcolor: #363636;\n}\n.content table tfoot td,\n.content table tfoot th {\n\tborder-width: 2px 0 0;\n\tcolor: #363636;\n}\n.content table tbody tr:last-child td,\n.content table tbody tr:last-child th {\n\tborder-bottom-width: 0;\n}\n.content .tabs li + li {\n\tmargin-top: 0;\n}\n.content.is-small {\n\tfont-size: 0.75rem;\n}\n.content.is-medium {\n\tfont-size: 1.25rem;\n}\n.content.is-large {\n\tfont-size: 1.5rem;\n}\n.icon {\n\talign-items: center;\n\tdisplay: inline-flex;\n\tjustify-content: center;\n\theight: 1.5rem;\n\twidth: 1.5rem;\n}\n.icon.is-small {\n\theight: 1rem;\n\twidth: 1rem;\n}\n.icon.is-medium {\n\theight: 2rem;\n\twidth: 2rem;\n}\n.icon.is-large {\n\theight: 3rem;\n\twidth: 3rem;\n}\n.image {\n\tdisplay: block;\n\tposition: relative;\n}\n.image img {\n\tdisplay: block;\n\theight: auto;\n\twidth: 100%;\n}\n.image img.is-rounded {\n\tborder-radius: 290486px;\n}\n.image.is-fullwidth {\n\twidth: 100%;\n}\n.image.is-1by1 .has-ratio,\n.image.is-1by1 img,\n.image.is-1by2 .has-ratio,\n.image.is-1by2 img,\n.image.is-1by3 .has-ratio,\n.image.is-1by3 img,\n.image.is-2by1 .has-ratio,\n.image.is-2by1 img,\n.image.is-2by3 .has-ratio,\n.image.is-2by3 img,\n.image.is-3by1 .has-ratio,\n.image.is-3by1 img,\n.image.is-3by2 .has-ratio,\n.image.is-3by2 img,\n.image.is-3by4 .has-ratio,\n.image.is-3by4 img,\n.image.is-3by5 .has-ratio,\n.image.is-3by5 img,\n.image.is-4by3 .has-ratio,\n.image.is-4by3 img,\n.image.is-4by5 .has-ratio,\n.image.is-4by5 img,\n.image.is-5by3 .has-ratio,\n.image.is-5by3 img,\n.image.is-5by4 .has-ratio,\n.image.is-5by4 img,\n.image.is-9by16 .has-ratio,\n.image.is-9by16 img,\n.image.is-16by9 .has-ratio,\n.image.is-16by9 img,\n.image.is-square .has-ratio,\n.image.is-square img {\n\theight: 100%;\n\twidth: 100%;\n}\n.image.is-1by1,\n.image.is-square {\n\tpadding-top: 100%;\n}\n.image.is-5by4 {\n\tpadding-top: 80%;\n}\n.image.is-4by3 {\n\tpadding-top: 75%;\n}\n.image.is-3by2 {\n\tpadding-top: 66.6666%;\n}\n.image.is-5by3 {\n\tpadding-top: 60%;\n}\n.image.is-16by9 {\n\tpadding-top: 56.25%;\n}\n.image.is-2by1 {\n\tpadding-top: 50%;\n}\n.image.is-3by1 {\n\tpadding-top: 33.3333%;\n}\n.image.is-4by5 {\n\tpadding-top: 125%;\n}\n.image.is-3by4 {\n\tpadding-top: 133.3333%;\n}\n.image.is-2by3 {\n\tpadding-top: 150%;\n}\n.image.is-3by5 {\n\tpadding-top: 166.6666%;\n}\n.image.is-9by16 {\n\tpadding-top: 177.7777%;\n}\n.image.is-1by2 {\n\tpadding-top: 200%;\n}\n.image.is-1by3 {\n\tpadding-top: 300%;\n}\n.image.is-16x16 {\n\theight: 16px;\n\twidth: 16px;\n}\n.image.is-24x24 {\n\theight: 24px;\n\twidth: 24px;\n}\n.image.is-32x32 {\n\theight: 32px;\n\twidth: 32px;\n}\n.image.is-48x48 {\n\theight: 48px;\n\twidth: 48px;\n}\n.image.is-64x64 {\n\theight: 64px;\n\twidth: 64px;\n}\n.image.is-96x96 {\n\theight: 96px;\n\twidth: 96px;\n}\n.image.is-128x128 {\n\theight: 128px;\n\twidth: 128px;\n}\n.notification {\n\tbackground-color: #f5f5f5;\n\tborder-radius: 4px;\n\tpadding: 1.25rem 2.5rem 1.25rem 1.5rem;\n\tposition: relative;\n}\n.notification a:not(.button):not(.dropdown-item) {\n\tcolor: currentColor;\n\ttext-decoration: underline;\n}\n.notification strong {\n\tcolor: currentColor;\n}\n.notification code,\n.notification pre {\n\tbackground: #fff;\n}\n.notification pre code {\n\tbackground: transparent;\n}\n.notification > .delete {\n\tposition: absolute;\n\tright: 0.5rem;\n\ttop: 0.5rem;\n}\n.notification .content,\n.notification .subtitle,\n.notification .title {\n\tcolor: currentColor;\n}\n.notification.is-white {\n\tbackground-color: #fff;\n\tcolor: #0a0a0a;\n}\n.notification.is-black {\n\tbackground-color: #0a0a0a;\n\tcolor: #fff;\n}\n.notification.is-light {\n\tbackground-color: #f5f5f5;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.notification.is-dark {\n\tbackground-color: #363636;\n\tcolor: #fff;\n}\n.notification.is-primary {\n\tbackground-color: #454545;\n\tcolor: #fff;\n}\n.notification.is-primary.is-light {\n\tbackground-color: #f5f5f5;\n\tcolor: #858585;\n}\n.notification.is-link {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\n.notification.is-link.is-light {\n\tbackground-color: #ebfffc;\n\tcolor: #00947e;\n}\n.notification.is-info {\n\tbackground-color: #3298dc;\n\tcolor: #fff;\n}\n.notification.is-info.is-light {\n\tbackground-color: #eef6fc;\n\tcolor: #1d72aa;\n}\n.notification.is-success {\n\tbackground-color: #48c774;\n\tcolor: #fff;\n}\n.notification.is-success.is-light {\n\tbackground-color: #effaf3;\n\tcolor: #257942;\n}\n.notification.is-warning {\n\tbackground-color: #ffdd57;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.notification.is-warning.is-light {\n\tbackground-color: #fffbeb;\n\tcolor: #947600;\n}\n.notification.is-danger {\n\tbackground-color: #f14668;\n\tcolor: #fff;\n}\n.notification.is-danger.is-light {\n\tbackground-color: #feecf0;\n\tcolor: #cc0f35;\n}\n.progress {\n\t-moz-appearance: none;\n\t-webkit-appearance: none;\n\tborder: none;\n\tborder-radius: 290486px;\n\tdisplay: block;\n\theight: 1rem;\n\toverflow: hidden;\n\tpadding: 0;\n\twidth: 100%;\n}\n.progress::-webkit-progress-bar {\n\tbackground-color: #ededed;\n}\n.progress::-webkit-progress-value {\n\tbackground-color: #4a4a4a;\n}\n.progress::-moz-progress-bar {\n\tbackground-color: #4a4a4a;\n}\n.progress::-ms-fill {\n\tbackground-color: #4a4a4a;\n\tborder: none;\n}\n.progress.is-white::-webkit-progress-value {\n\tbackground-color: #fff;\n}\n.progress.is-white::-moz-progress-bar {\n\tbackground-color: #fff;\n}\n.progress.is-white::-ms-fill {\n\tbackground-color: #fff;\n}\n.progress.is-white:indeterminate {\n\tbackground-image: linear-gradient(90deg, #fff 30%, #ededed 0);\n}\n.progress.is-black::-webkit-progress-value {\n\tbackground-color: #0a0a0a;\n}\n.progress.is-black::-moz-progress-bar {\n\tbackground-color: #0a0a0a;\n}\n.progress.is-black::-ms-fill {\n\tbackground-color: #0a0a0a;\n}\n.progress.is-black:indeterminate {\n\tbackground-image: linear-gradient(90deg, #0a0a0a 30%, #ededed 0);\n}\n.progress.is-light::-webkit-progress-value {\n\tbackground-color: #f5f5f5;\n}\n.progress.is-light::-moz-progress-bar {\n\tbackground-color: #f5f5f5;\n}\n.progress.is-light::-ms-fill {\n\tbackground-color: #f5f5f5;\n}\n.progress.is-light:indeterminate {\n\tbackground-image: linear-gradient(90deg, #f5f5f5 30%, #ededed 0);\n}\n.progress.is-dark::-webkit-progress-value {\n\tbackground-color: #363636;\n}\n.progress.is-dark::-moz-progress-bar {\n\tbackground-color: #363636;\n}\n.progress.is-dark::-ms-fill {\n\tbackground-color: #363636;\n}\n.progress.is-dark:indeterminate {\n\tbackground-image: linear-gradient(90deg, #363636 30%, #ededed 0);\n}\n.progress.is-primary::-webkit-progress-value {\n\tbackground-color: #454545;\n}\n.progress.is-primary::-moz-progress-bar {\n\tbackground-color: #454545;\n}\n.progress.is-primary::-ms-fill {\n\tbackground-color: #454545;\n}\n.progress.is-primary:indeterminate {\n\tbackground-image: linear-gradient(90deg, #454545 30%, #ededed 0);\n}\n.progress.is-link::-webkit-progress-value {\n\tbackground-color: #00d1b2;\n}\n.progress.is-link::-moz-progress-bar {\n\tbackground-color: #00d1b2;\n}\n.progress.is-link::-ms-fill {\n\tbackground-color: #00d1b2;\n}\n.progress.is-link:indeterminate {\n\tbackground-image: linear-gradient(90deg, #00d1b2 30%, #ededed 0);\n}\n.progress.is-info::-webkit-progress-value {\n\tbackground-color: #3298dc;\n}\n.progress.is-info::-moz-progress-bar {\n\tbackground-color: #3298dc;\n}\n.progress.is-info::-ms-fill {\n\tbackground-color: #3298dc;\n}\n.progress.is-info:indeterminate {\n\tbackground-image: linear-gradient(90deg, #3298dc 30%, #ededed 0);\n}\n.progress.is-success::-webkit-progress-value {\n\tbackground-color: #48c774;\n}\n.progress.is-success::-moz-progress-bar {\n\tbackground-color: #48c774;\n}\n.progress.is-success::-ms-fill {\n\tbackground-color: #48c774;\n}\n.progress.is-success:indeterminate {\n\tbackground-image: linear-gradient(90deg, #48c774 30%, #ededed 0);\n}\n.progress.is-warning::-webkit-progress-value {\n\tbackground-color: #ffdd57;\n}\n.progress.is-warning::-moz-progress-bar {\n\tbackground-color: #ffdd57;\n}\n.progress.is-warning::-ms-fill {\n\tbackground-color: #ffdd57;\n}\n.progress.is-warning:indeterminate {\n\tbackground-image: linear-gradient(90deg, #ffdd57 30%, #ededed 0);\n}\n.progress.is-danger::-webkit-progress-value {\n\tbackground-color: #f14668;\n}\n.progress.is-danger::-moz-progress-bar {\n\tbackground-color: #f14668;\n}\n.progress.is-danger::-ms-fill {\n\tbackground-color: #f14668;\n}\n.progress.is-danger:indeterminate {\n\tbackground-image: linear-gradient(90deg, #f14668 30%, #ededed 0);\n}\n.progress:indeterminate {\n\tanimation-duration: 1.5s;\n\tanimation-iteration-count: infinite;\n\tanimation-name: moveIndeterminate;\n\tanimation-timing-function: linear;\n\tbackground-color: #ededed;\n\tbackground-image: linear-gradient(90deg, #4a4a4a 30%, #ededed 0);\n\tbackground-position: 0 0;\n\tbackground-repeat: no-repeat;\n\tbackground-size: 150% 150%;\n}\n.progress:indeterminate::-webkit-progress-bar {\n\tbackground-color: transparent;\n}\n.progress:indeterminate::-moz-progress-bar {\n\tbackground-color: transparent;\n}\n.progress.is-small {\n\theight: 0.75rem;\n}\n.progress.is-medium {\n\theight: 1.25rem;\n}\n.progress.is-large {\n\theight: 1.5rem;\n}\n@keyframes moveIndeterminate {\n\t0% {\n\t\tbackground-position: 200% 0;\n\t}\n\tto {\n\t\tbackground-position: -200% 0;\n\t}\n}\n.table {\n\tbackground-color: #fff;\n\tcolor: #363636;\n}\n.table td,\n.table th {\n\tborder: solid #dbdbdb;\n\tborder-width: 0 0 1px;\n\tpadding: 0.5em 0.75em;\n\tvertical-align: top;\n}\n.table td.is-white,\n.table th.is-white {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #0a0a0a;\n}\n.table td.is-black,\n.table th.is-black {\n\tbackground-color: #0a0a0a;\n\tborder-color: #0a0a0a;\n\tcolor: #fff;\n}\n.table td.is-light,\n.table th.is-light {\n\tbackground-color: #f5f5f5;\n\tborder-color: #f5f5f5;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.table td.is-dark,\n.table th.is-dark {\n\tbackground-color: #363636;\n\tborder-color: #363636;\n\tcolor: #fff;\n}\n.table td.is-primary,\n.table th.is-primary {\n\tbackground-color: #454545;\n\tborder-color: #454545;\n\tcolor: #fff;\n}\n.table td.is-link,\n.table th.is-link {\n\tbackground-color: #00d1b2;\n\tborder-color: #00d1b2;\n\tcolor: #fff;\n}\n.table td.is-info,\n.table th.is-info {\n\tbackground-color: #3298dc;\n\tborder-color: #3298dc;\n\tcolor: #fff;\n}\n.table td.is-success,\n.table th.is-success {\n\tbackground-color: #48c774;\n\tborder-color: #48c774;\n\tcolor: #fff;\n}\n.table td.is-warning,\n.table th.is-warning {\n\tbackground-color: #ffdd57;\n\tborder-color: #ffdd57;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.table td.is-danger,\n.table th.is-danger {\n\tbackground-color: #f14668;\n\tborder-color: #f14668;\n\tcolor: #fff;\n}\n.table td.is-narrow,\n.table th.is-narrow {\n\twhite-space: nowrap;\n\twidth: 1%;\n}\n.table td.is-selected,\n.table th.is-selected {\n\tbackground-color: #454545;\n\tcolor: #fff;\n}\n.table td.is-selected a,\n.table td.is-selected strong,\n.table th.is-selected a,\n.table th.is-selected strong {\n\tcolor: currentColor;\n}\n.table th {\n\tcolor: #363636;\n}\n.table th:not([align]) {\n\ttext-align: left;\n}\n.table tr.is-selected {\n\tbackground-color: #454545;\n\tcolor: #fff;\n}\n.table tr.is-selected a,\n.table tr.is-selected strong {\n\tcolor: currentColor;\n}\n.table tr.is-selected td,\n.table tr.is-selected th {\n\tborder-color: #fff;\n\tcolor: currentColor;\n}\n.table thead {\n\tbackground-color: transparent;\n}\n.table thead td,\n.table thead th {\n\tborder-width: 0 0 2px;\n\tcolor: #363636;\n}\n.table tfoot {\n\tbackground-color: transparent;\n}\n.table tfoot td,\n.table tfoot th {\n\tborder-width: 2px 0 0;\n\tcolor: #363636;\n}\n.table tbody {\n\tbackground-color: transparent;\n}\n.table tbody tr:last-child td,\n.table tbody tr:last-child th {\n\tborder-bottom-width: 0;\n}\n.table.is-bordered td,\n.table.is-bordered th {\n\tborder-width: 1px;\n}\n.table.is-bordered tr:last-child td,\n.table.is-bordered tr:last-child th {\n\tborder-bottom-width: 1px;\n}\n.table.is-fullwidth {\n\twidth: 100%;\n}\n.table.is-hoverable.is-striped tbody tr:not(.is-selected):hover,\n.table.is-hoverable tbody tr:not(.is-selected):hover {\n\tbackground-color: #fafafa;\n}\n.table.is-hoverable.is-striped tbody tr:not(.is-selected):hover:nth-child(2n) {\n\tbackground-color: #f5f5f5;\n}\n.table.is-narrow td,\n.table.is-narrow th {\n\tpadding: 0.25em 0.5em;\n}\n.table.is-striped tbody tr:not(.is-selected):nth-child(2n) {\n\tbackground-color: #fafafa;\n}\n.table-container {\n\t-webkit-overflow-scrolling: touch;\n\toverflow: auto;\n\toverflow-y: hidden;\n\tmax-width: 100%;\n}\n.tags {\n\talign-items: center;\n\tdisplay: flex;\n\tflex-wrap: wrap;\n\tjustify-content: flex-start;\n}\n.tags .tag {\n\tmargin-bottom: 0.5rem;\n}\n.tags .tag:not(:last-child) {\n\tmargin-right: 0.5rem;\n}\n.tags:last-child {\n\tmargin-bottom: -0.5rem;\n}\n.tags:not(:last-child) {\n\tmargin-bottom: 1rem;\n}\n.tags.are-medium .tag:not(.is-normal):not(.is-large) {\n\tfont-size: 1rem;\n}\n.tags.are-large .tag:not(.is-normal):not(.is-medium) {\n\tfont-size: 1.25rem;\n}\n.tags.is-centered {\n\tjustify-content: center;\n}\n.tags.is-centered .tag {\n\tmargin-right: 0.25rem;\n\tmargin-left: 0.25rem;\n}\n.tags.is-right {\n\tjustify-content: flex-end;\n}\n.tags.is-right .tag:not(:first-child) {\n\tmargin-left: 0.5rem;\n}\n.tags.has-addons .tag,\n.tags.is-right .tag:not(:last-child) {\n\tmargin-right: 0;\n}\n.tags.has-addons .tag:not(:first-child) {\n\tmargin-left: 0;\n\tborder-bottom-left-radius: 0;\n\tborder-top-left-radius: 0;\n}\n.tags.has-addons .tag:not(:last-child) {\n\tborder-bottom-right-radius: 0;\n\tborder-top-right-radius: 0;\n}\n.tag:not(body) {\n\talign-items: center;\n\tbackground-color: #f5f5f5;\n\tborder-radius: 4px;\n\tcolor: #4a4a4a;\n\tdisplay: inline-flex;\n\tfont-size: 0.75rem;\n\theight: 2em;\n\tjustify-content: center;\n\tline-height: 1.5;\n\tpadding-left: 0.75em;\n\tpadding-right: 0.75em;\n\twhite-space: nowrap;\n}\n.tag:not(body) .delete {\n\tmargin-left: 0.25rem;\n\tmargin-right: -0.375rem;\n}\n.tag:not(body).is-white {\n\tbackground-color: #fff;\n\tcolor: #0a0a0a;\n}\n.tag:not(body).is-black {\n\tbackground-color: #0a0a0a;\n\tcolor: #fff;\n}\n.tag:not(body).is-light {\n\tbackground-color: #f5f5f5;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.tag:not(body).is-dark {\n\tbackground-color: #363636;\n\tcolor: #fff;\n}\n.tag:not(body).is-primary {\n\tbackground-color: #454545;\n\tcolor: #fff;\n}\n.tag:not(body).is-primary.is-light {\n\tbackground-color: #f5f5f5;\n\tcolor: #858585;\n}\n.tag:not(body).is-link {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\n.tag:not(body).is-link.is-light {\n\tbackground-color: #ebfffc;\n\tcolor: #00947e;\n}\n.tag:not(body).is-info {\n\tbackground-color: #3298dc;\n\tcolor: #fff;\n}\n.tag:not(body).is-info.is-light {\n\tbackground-color: #eef6fc;\n\tcolor: #1d72aa;\n}\n.tag:not(body).is-success {\n\tbackground-color: #48c774;\n\tcolor: #fff;\n}\n.tag:not(body).is-success.is-light {\n\tbackground-color: #effaf3;\n\tcolor: #257942;\n}\n.tag:not(body).is-warning {\n\tbackground-color: #ffdd57;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.tag:not(body).is-warning.is-light {\n\tbackground-color: #fffbeb;\n\tcolor: #947600;\n}\n.tag:not(body).is-danger {\n\tbackground-color: #f14668;\n\tcolor: #fff;\n}\n.tag:not(body).is-danger.is-light {\n\tbackground-color: #feecf0;\n\tcolor: #cc0f35;\n}\n.tag:not(body).is-normal {\n\tfont-size: 0.75rem;\n}\n.tag:not(body).is-medium {\n\tfont-size: 1rem;\n}\n.tag:not(body).is-large {\n\tfont-size: 1.25rem;\n}\n.tag:not(body) .icon:first-child:not(:last-child) {\n\tmargin-left: -0.375em;\n\tmargin-right: 0.1875em;\n}\n.tag:not(body) .icon:last-child:not(:first-child) {\n\tmargin-left: 0.1875em;\n\tmargin-right: -0.375em;\n}\n.tag:not(body) .icon:first-child:last-child {\n\tmargin-left: -0.375em;\n\tmargin-right: -0.375em;\n}\n.tag:not(body).is-delete {\n\tmargin-left: 1px;\n\tpadding: 0;\n\tposition: relative;\n\twidth: 2em;\n}\n.tag:not(body).is-delete:after,\n.tag:not(body).is-delete:before {\n\tbackground-color: currentColor;\n\tcontent: \"\";\n\tdisplay: block;\n\tleft: 50%;\n\tposition: absolute;\n\ttop: 50%;\n\ttransform: translateX(-50%) translateY(-50%) rotate(45deg);\n\ttransform-origin: center center;\n}\n.tag:not(body).is-delete:before {\n\theight: 1px;\n\twidth: 50%;\n}\n.tag:not(body).is-delete:after {\n\theight: 50%;\n\twidth: 1px;\n}\n.tag:not(body).is-delete:focus,\n.tag:not(body).is-delete:hover {\n\tbackground-color: #e8e8e8;\n}\n.tag:not(body).is-delete:active {\n\tbackground-color: #dbdbdb;\n}\n.tag:not(body).is-rounded {\n\tborder-radius: 290486px;\n}\na.tag:hover {\n\ttext-decoration: underline;\n}\n.subtitle,\n.title {\n\tword-break: break-word;\n}\n.subtitle em,\n.subtitle span,\n.title em,\n.title span {\n\tfont-weight: inherit;\n}\n.subtitle sub,\n.subtitle sup,\n.title sub,\n.title sup {\n\tfont-size: 0.75em;\n}\n.subtitle .tag,\n.title .tag {\n\tvertical-align: middle;\n}\n.title {\n\tcolor: #363636;\n\tfont-size: 2rem;\n\tfont-weight: 600;\n\tline-height: 1.125;\n}\n.title strong {\n\tcolor: inherit;\n\tfont-weight: inherit;\n}\n.title + .highlight {\n\tmargin-top: -0.75rem;\n}\n.title:not(.is-spaced) + .subtitle {\n\tmargin-top: -1.25rem;\n}\n.title.is-1 {\n\tfont-size: 3rem;\n}\n.title.is-2 {\n\tfont-size: 2.5rem;\n}\n.title.is-3 {\n\tfont-size: 2rem;\n}\n.title.is-4 {\n\tfont-size: 1.5rem;\n}\n.title.is-5 {\n\tfont-size: 1.25rem;\n}\n.title.is-6 {\n\tfont-size: 1rem;\n}\n.title.is-7 {\n\tfont-size: 0.75rem;\n}\n.subtitle {\n\tcolor: #4a4a4a;\n\tfont-size: 1.25rem;\n\tfont-weight: 400;\n\tline-height: 1.25;\n}\n.subtitle strong {\n\tcolor: #363636;\n\tfont-weight: 600;\n}\n.subtitle:not(.is-spaced) + .title {\n\tmargin-top: -1.25rem;\n}\n.subtitle.is-1 {\n\tfont-size: 3rem;\n}\n.subtitle.is-2 {\n\tfont-size: 2.5rem;\n}\n.subtitle.is-3 {\n\tfont-size: 2rem;\n}\n.subtitle.is-4 {\n\tfont-size: 1.5rem;\n}\n.subtitle.is-5 {\n\tfont-size: 1.25rem;\n}\n.subtitle.is-6 {\n\tfont-size: 1rem;\n}\n.subtitle.is-7 {\n\tfont-size: 0.75rem;\n}\n.heading {\n\tdisplay: block;\n\tfont-size: 11px;\n\tletter-spacing: 1px;\n\tmargin-bottom: 5px;\n\ttext-transform: uppercase;\n}\n.highlight {\n\tfont-weight: 400;\n\tmax-width: 100%;\n\toverflow: hidden;\n\tpadding: 0;\n}\n.highlight pre {\n\toverflow: auto;\n\tmax-width: 100%;\n}\n.number {\n\talign-items: center;\n\tbackground-color: #f5f5f5;\n\tborder-radius: 290486px;\n\tdisplay: inline-flex;\n\tfont-size: 1.25rem;\n\theight: 2em;\n\tjustify-content: center;\n\tmargin-right: 1.5rem;\n\tmin-width: 2.5em;\n\tpadding: 0.25rem 0.5rem;\n\ttext-align: center;\n\tvertical-align: top;\n}\n.input,\n.select select,\n.textarea {\n\tbackground-color: #fff;\n\tborder-color: #dbdbdb;\n\tborder-radius: 4px;\n\tcolor: #363636;\n}\n.input::-moz-placeholder,\n.select select::-moz-placeholder,\n.textarea::-moz-placeholder {\n\tcolor: rgba(54, 54, 54, 0.3);\n}\n.input::-webkit-input-placeholder,\n.select select::-webkit-input-placeholder,\n.textarea::-webkit-input-placeholder {\n\tcolor: rgba(54, 54, 54, 0.3);\n}\n.input:-moz-placeholder,\n.select select:-moz-placeholder,\n.textarea:-moz-placeholder {\n\tcolor: rgba(54, 54, 54, 0.3);\n}\n.input:-ms-input-placeholder,\n.select select:-ms-input-placeholder,\n.textarea:-ms-input-placeholder {\n\tcolor: rgba(54, 54, 54, 0.3);\n}\n.input:hover,\n.is-hovered.input,\n.is-hovered.textarea,\n.select select.is-hovered,\n.select select:hover,\n.textarea:hover {\n\tborder-color: #b5b5b5;\n}\n.input:active,\n.input:focus,\n.is-active.input,\n.is-active.textarea,\n.is-focused.input,\n.is-focused.textarea,\n.select select.is-active,\n.select select.is-focused,\n.select select:active,\n.select select:focus,\n.textarea:active,\n.textarea:focus {\n\tborder-color: #00d1b2;\n\tbox-shadow: 0 0 0 0.125em rgba(0, 209, 178, 0.25);\n}\n.input[disabled],\n.select fieldset[disabled] select,\n.select select[disabled],\n.textarea[disabled],\nfieldset[disabled] .input,\nfieldset[disabled] .select select,\nfieldset[disabled] .textarea {\n\tbackground-color: #f5f5f5;\n\tborder-color: #f5f5f5;\n\tbox-shadow: none;\n\tcolor: #7a7a7a;\n}\n.input[disabled]::-moz-placeholder,\n.select fieldset[disabled] select::-moz-placeholder,\n.select select[disabled]::-moz-placeholder,\n.textarea[disabled]::-moz-placeholder,\nfieldset[disabled] .input::-moz-placeholder,\nfieldset[disabled] .select select::-moz-placeholder,\nfieldset[disabled] .textarea::-moz-placeholder {\n\tcolor: hsla(0, 0%, 47.8%, 0.3);\n}\n.input[disabled]::-webkit-input-placeholder,\n.select fieldset[disabled] select::-webkit-input-placeholder,\n.select select[disabled]::-webkit-input-placeholder,\n.textarea[disabled]::-webkit-input-placeholder,\nfieldset[disabled] .input::-webkit-input-placeholder,\nfieldset[disabled] .select select::-webkit-input-placeholder,\nfieldset[disabled] .textarea::-webkit-input-placeholder {\n\tcolor: hsla(0, 0%, 47.8%, 0.3);\n}\n.input[disabled]:-moz-placeholder,\n.select fieldset[disabled] select:-moz-placeholder,\n.select select[disabled]:-moz-placeholder,\n.textarea[disabled]:-moz-placeholder,\nfieldset[disabled] .input:-moz-placeholder,\nfieldset[disabled] .select select:-moz-placeholder,\nfieldset[disabled] .textarea:-moz-placeholder {\n\tcolor: hsla(0, 0%, 47.8%, 0.3);\n}\n.input[disabled]:-ms-input-placeholder,\n.select fieldset[disabled] select:-ms-input-placeholder,\n.select select[disabled]:-ms-input-placeholder,\n.textarea[disabled]:-ms-input-placeholder,\nfieldset[disabled] .input:-ms-input-placeholder,\nfieldset[disabled] .select select:-ms-input-placeholder,\nfieldset[disabled] .textarea:-ms-input-placeholder {\n\tcolor: hsla(0, 0%, 47.8%, 0.3);\n}\n.input,\n.textarea {\n\tbox-shadow: inset 0 0.0625em 0.125em rgba(10, 10, 10, 0.05);\n\tmax-width: 100%;\n\twidth: 100%;\n}\n.input[readonly],\n.textarea[readonly] {\n\tbox-shadow: none;\n}\n.is-white.input,\n.is-white.textarea {\n\tborder-color: #fff;\n}\n.is-white.input:active,\n.is-white.input:focus,\n.is-white.is-active.input,\n.is-white.is-active.textarea,\n.is-white.is-focused.input,\n.is-white.is-focused.textarea,\n.is-white.textarea:active,\n.is-white.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em hsla(0, 0%, 100%, 0.25);\n}\n.is-black.input,\n.is-black.textarea {\n\tborder-color: #0a0a0a;\n}\n.is-black.input:active,\n.is-black.input:focus,\n.is-black.is-active.input,\n.is-black.is-active.textarea,\n.is-black.is-focused.input,\n.is-black.is-focused.textarea,\n.is-black.textarea:active,\n.is-black.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(10, 10, 10, 0.25);\n}\n.is-light.input,\n.is-light.textarea {\n\tborder-color: #f5f5f5;\n}\n.is-light.input:active,\n.is-light.input:focus,\n.is-light.is-active.input,\n.is-light.is-active.textarea,\n.is-light.is-focused.input,\n.is-light.is-focused.textarea,\n.is-light.textarea:active,\n.is-light.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em hsla(0, 0%, 96.1%, 0.25);\n}\n.is-dark.input,\n.is-dark.textarea {\n\tborder-color: #363636;\n}\n.is-dark.input:active,\n.is-dark.input:focus,\n.is-dark.is-active.input,\n.is-dark.is-active.textarea,\n.is-dark.is-focused.input,\n.is-dark.is-focused.textarea,\n.is-dark.textarea:active,\n.is-dark.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(54, 54, 54, 0.25);\n}\n.is-primary.input,\n.is-primary.textarea {\n\tborder-color: #454545;\n}\n.is-primary.input:active,\n.is-primary.input:focus,\n.is-primary.is-active.input,\n.is-primary.is-active.textarea,\n.is-primary.is-focused.input,\n.is-primary.is-focused.textarea,\n.is-primary.textarea:active,\n.is-primary.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(69, 69, 69, 0.25);\n}\n.is-link.input,\n.is-link.textarea {\n\tborder-color: #00d1b2;\n}\n.is-link.input:active,\n.is-link.input:focus,\n.is-link.is-active.input,\n.is-link.is-active.textarea,\n.is-link.is-focused.input,\n.is-link.is-focused.textarea,\n.is-link.textarea:active,\n.is-link.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(0, 209, 178, 0.25);\n}\n.is-info.input,\n.is-info.textarea {\n\tborder-color: #3298dc;\n}\n.is-info.input:active,\n.is-info.input:focus,\n.is-info.is-active.input,\n.is-info.is-active.textarea,\n.is-info.is-focused.input,\n.is-info.is-focused.textarea,\n.is-info.textarea:active,\n.is-info.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(50, 152, 220, 0.25);\n}\n.is-success.input,\n.is-success.textarea {\n\tborder-color: #48c774;\n}\n.is-success.input:active,\n.is-success.input:focus,\n.is-success.is-active.input,\n.is-success.is-active.textarea,\n.is-success.is-focused.input,\n.is-success.is-focused.textarea,\n.is-success.textarea:active,\n.is-success.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(72, 199, 116, 0.25);\n}\n.is-warning.input,\n.is-warning.textarea {\n\tborder-color: #ffdd57;\n}\n.is-warning.input:active,\n.is-warning.input:focus,\n.is-warning.is-active.input,\n.is-warning.is-active.textarea,\n.is-warning.is-focused.input,\n.is-warning.is-focused.textarea,\n.is-warning.textarea:active,\n.is-warning.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(255, 221, 87, 0.25);\n}\n.is-danger.input,\n.is-danger.textarea {\n\tborder-color: #f14668;\n}\n.is-danger.input:active,\n.is-danger.input:focus,\n.is-danger.is-active.input,\n.is-danger.is-active.textarea,\n.is-danger.is-focused.input,\n.is-danger.is-focused.textarea,\n.is-danger.textarea:active,\n.is-danger.textarea:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(241, 70, 104, 0.25);\n}\n.is-small.input,\n.is-small.textarea {\n\tborder-radius: 2px;\n\tfont-size: 0.75rem;\n}\n.is-medium.input,\n.is-medium.textarea {\n\tfont-size: 1.25rem;\n}\n.is-large.input,\n.is-large.textarea {\n\tfont-size: 1.5rem;\n}\n.is-fullwidth.input,\n.is-fullwidth.textarea {\n\tdisplay: block;\n\twidth: 100%;\n}\n.is-inline.input,\n.is-inline.textarea {\n\tdisplay: inline;\n\twidth: auto;\n}\n.input.is-rounded {\n\tborder-radius: 290486px;\n\tpadding-left: calc(1.125em - 1px);\n\tpadding-right: calc(1.125em - 1px);\n}\n.input.is-static {\n\tbackground-color: transparent;\n\tborder-color: transparent;\n\tbox-shadow: none;\n\tpadding-left: 0;\n\tpadding-right: 0;\n}\n.textarea {\n\tdisplay: block;\n\tmax-width: 100%;\n\tmin-width: 100%;\n\tpadding: calc(0.75em - 1px);\n\tresize: vertical;\n}\n.textarea:not([rows]) {\n\tmax-height: 40em;\n\tmin-height: 8em;\n}\n.textarea[rows] {\n\theight: auto;\n}\n.textarea.has-fixed-size {\n\tresize: none;\n}\n.checkbox,\n.radio {\n\tcursor: pointer;\n\tdisplay: inline-block;\n\tline-height: 1.25;\n\tposition: relative;\n}\n.checkbox input,\n.radio input {\n\tcursor: pointer;\n}\n.checkbox:hover,\n.radio:hover {\n\tcolor: #363636;\n}\n.checkbox[disabled],\n.radio[disabled],\nfieldset[disabled] .checkbox,\nfieldset[disabled] .radio {\n\tcolor: #7a7a7a;\n\tcursor: not-allowed;\n}\n.radio + .radio {\n\tmargin-left: 0.5em;\n}\n.select {\n\tdisplay: inline-block;\n\tmax-width: 100%;\n\tposition: relative;\n\tvertical-align: top;\n}\n.select:not(.is-multiple) {\n\theight: 2.5em;\n}\n.select:not(.is-multiple):not(.is-loading):after {\n\tborder-color: #00d1b2;\n\tright: 1.125em;\n\tz-index: 4;\n}\n.select.is-rounded select {\n\tborder-radius: 290486px;\n\tpadding-left: 1em;\n}\n.select select {\n\tcursor: pointer;\n\tdisplay: block;\n\tfont-size: 1em;\n\tmax-width: 100%;\n\toutline: none;\n}\n.select select::-ms-expand {\n\tdisplay: none;\n}\n.select select[disabled]:hover,\nfieldset[disabled] .select select:hover {\n\tborder-color: #f5f5f5;\n}\n.select select:not([multiple]) {\n\tpadding-right: 2.5em;\n}\n.select select[multiple] {\n\theight: auto;\n\tpadding: 0;\n}\n.select select[multiple] option {\n\tpadding: 0.5em 1em;\n}\n.select:not(.is-multiple):not(.is-loading):hover:after {\n\tborder-color: #363636;\n}\n.select.is-white:not(:hover):after,\n.select.is-white select {\n\tborder-color: #fff;\n}\n.select.is-white select.is-hovered,\n.select.is-white select:hover {\n\tborder-color: #f2f2f2;\n}\n.select.is-white select.is-active,\n.select.is-white select.is-focused,\n.select.is-white select:active,\n.select.is-white select:focus {\n\tbox-shadow: 0 0 0 0.125em hsla(0, 0%, 100%, 0.25);\n}\n.select.is-black:not(:hover):after,\n.select.is-black select {\n\tborder-color: #0a0a0a;\n}\n.select.is-black select.is-hovered,\n.select.is-black select:hover {\n\tborder-color: #000;\n}\n.select.is-black select.is-active,\n.select.is-black select.is-focused,\n.select.is-black select:active,\n.select.is-black select:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(10, 10, 10, 0.25);\n}\n.select.is-light:not(:hover):after,\n.select.is-light select {\n\tborder-color: #f5f5f5;\n}\n.select.is-light select.is-hovered,\n.select.is-light select:hover {\n\tborder-color: #e8e8e8;\n}\n.select.is-light select.is-active,\n.select.is-light select.is-focused,\n.select.is-light select:active,\n.select.is-light select:focus {\n\tbox-shadow: 0 0 0 0.125em hsla(0, 0%, 96.1%, 0.25);\n}\n.select.is-dark:not(:hover):after,\n.select.is-dark select {\n\tborder-color: #363636;\n}\n.select.is-dark select.is-hovered,\n.select.is-dark select:hover {\n\tborder-color: #292929;\n}\n.select.is-dark select.is-active,\n.select.is-dark select.is-focused,\n.select.is-dark select:active,\n.select.is-dark select:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(54, 54, 54, 0.25);\n}\n.select.is-primary:not(:hover):after,\n.select.is-primary select {\n\tborder-color: #454545;\n}\n.select.is-primary select.is-hovered,\n.select.is-primary select:hover {\n\tborder-color: #383838;\n}\n.select.is-primary select.is-active,\n.select.is-primary select.is-focused,\n.select.is-primary select:active,\n.select.is-primary select:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(69, 69, 69, 0.25);\n}\n.select.is-link:not(:hover):after,\n.select.is-link select {\n\tborder-color: #00d1b2;\n}\n.select.is-link select.is-hovered,\n.select.is-link select:hover {\n\tborder-color: #00b89c;\n}\n.select.is-link select.is-active,\n.select.is-link select.is-focused,\n.select.is-link select:active,\n.select.is-link select:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(0, 209, 178, 0.25);\n}\n.select.is-info:not(:hover):after,\n.select.is-info select {\n\tborder-color: #3298dc;\n}\n.select.is-info select.is-hovered,\n.select.is-info select:hover {\n\tborder-color: #238cd1;\n}\n.select.is-info select.is-active,\n.select.is-info select.is-focused,\n.select.is-info select:active,\n.select.is-info select:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(50, 152, 220, 0.25);\n}\n.select.is-success:not(:hover):after,\n.select.is-success select {\n\tborder-color: #48c774;\n}\n.select.is-success select.is-hovered,\n.select.is-success select:hover {\n\tborder-color: #3abb67;\n}\n.select.is-success select.is-active,\n.select.is-success select.is-focused,\n.select.is-success select:active,\n.select.is-success select:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(72, 199, 116, 0.25);\n}\n.select.is-warning:not(:hover):after,\n.select.is-warning select {\n\tborder-color: #ffdd57;\n}\n.select.is-warning select.is-hovered,\n.select.is-warning select:hover {\n\tborder-color: #ffd83d;\n}\n.select.is-warning select.is-active,\n.select.is-warning select.is-focused,\n.select.is-warning select:active,\n.select.is-warning select:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(255, 221, 87, 0.25);\n}\n.select.is-danger:not(:hover):after,\n.select.is-danger select {\n\tborder-color: #f14668;\n}\n.select.is-danger select.is-hovered,\n.select.is-danger select:hover {\n\tborder-color: #ef2e55;\n}\n.select.is-danger select.is-active,\n.select.is-danger select.is-focused,\n.select.is-danger select:active,\n.select.is-danger select:focus {\n\tbox-shadow: 0 0 0 0.125em rgba(241, 70, 104, 0.25);\n}\n.select.is-small {\n\tborder-radius: 2px;\n\tfont-size: 0.75rem;\n}\n.select.is-medium {\n\tfont-size: 1.25rem;\n}\n.select.is-large {\n\tfont-size: 1.5rem;\n}\n.select.is-disabled:after {\n\tborder-color: #7a7a7a;\n}\n.select.is-fullwidth,\n.select.is-fullwidth select {\n\twidth: 100%;\n}\n.select.is-loading:after {\n\tmargin-top: 0;\n\tposition: absolute;\n\tright: 0.625em;\n\ttop: 0.625em;\n\ttransform: none;\n}\n.select.is-loading.is-small:after {\n\tfont-size: 0.75rem;\n}\n.select.is-loading.is-medium:after {\n\tfont-size: 1.25rem;\n}\n.select.is-loading.is-large:after {\n\tfont-size: 1.5rem;\n}\n.file {\n\talign-items: stretch;\n\tdisplay: flex;\n\tjustify-content: flex-start;\n\tposition: relative;\n}\n.file.is-white .file-cta {\n\tbackground-color: #fff;\n\tborder-color: transparent;\n\tcolor: #0a0a0a;\n}\n.file.is-white.is-hovered .file-cta,\n.file.is-white:hover .file-cta {\n\tbackground-color: #f9f9f9;\n\tborder-color: transparent;\n\tcolor: #0a0a0a;\n}\n.file.is-white.is-focused .file-cta,\n.file.is-white:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em hsla(0, 0%, 100%, 0.25);\n\tcolor: #0a0a0a;\n}\n.file.is-white.is-active .file-cta,\n.file.is-white:active .file-cta {\n\tbackground-color: #f2f2f2;\n\tborder-color: transparent;\n\tcolor: #0a0a0a;\n}\n.file.is-black .file-cta {\n\tbackground-color: #0a0a0a;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-black.is-hovered .file-cta,\n.file.is-black:hover .file-cta {\n\tbackground-color: #040404;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-black.is-focused .file-cta,\n.file.is-black:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em rgba(10, 10, 10, 0.25);\n\tcolor: #fff;\n}\n.file.is-black.is-active .file-cta,\n.file.is-black:active .file-cta {\n\tbackground-color: #000;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-light .file-cta {\n\tbackground-color: #f5f5f5;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.file.is-light.is-hovered .file-cta,\n.file.is-light:hover .file-cta {\n\tbackground-color: #eee;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.file.is-light.is-focused .file-cta,\n.file.is-light:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em hsla(0, 0%, 96.1%, 0.25);\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.file.is-light.is-active .file-cta,\n.file.is-light:active .file-cta {\n\tbackground-color: #e8e8e8;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.file.is-dark .file-cta {\n\tbackground-color: #363636;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-dark.is-hovered .file-cta,\n.file.is-dark:hover .file-cta {\n\tbackground-color: #2f2f2f;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-dark.is-focused .file-cta,\n.file.is-dark:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em rgba(54, 54, 54, 0.25);\n\tcolor: #fff;\n}\n.file.is-dark.is-active .file-cta,\n.file.is-dark:active .file-cta {\n\tbackground-color: #292929;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-primary .file-cta {\n\tbackground-color: #454545;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-primary.is-hovered .file-cta,\n.file.is-primary:hover .file-cta {\n\tbackground-color: #3f3f3f;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-primary.is-focused .file-cta,\n.file.is-primary:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em rgba(69, 69, 69, 0.25);\n\tcolor: #fff;\n}\n.file.is-primary.is-active .file-cta,\n.file.is-primary:active .file-cta {\n\tbackground-color: #383838;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-link .file-cta {\n\tbackground-color: #00d1b2;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-link.is-hovered .file-cta,\n.file.is-link:hover .file-cta {\n\tbackground-color: #00c4a7;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-link.is-focused .file-cta,\n.file.is-link:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em rgba(0, 209, 178, 0.25);\n\tcolor: #fff;\n}\n.file.is-link.is-active .file-cta,\n.file.is-link:active .file-cta {\n\tbackground-color: #00b89c;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-info .file-cta {\n\tbackground-color: #3298dc;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-info.is-hovered .file-cta,\n.file.is-info:hover .file-cta {\n\tbackground-color: #2793da;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-info.is-focused .file-cta,\n.file.is-info:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em rgba(50, 152, 220, 0.25);\n\tcolor: #fff;\n}\n.file.is-info.is-active .file-cta,\n.file.is-info:active .file-cta {\n\tbackground-color: #238cd1;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-success .file-cta {\n\tbackground-color: #48c774;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-success.is-hovered .file-cta,\n.file.is-success:hover .file-cta {\n\tbackground-color: #3ec46d;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-success.is-focused .file-cta,\n.file.is-success:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em rgba(72, 199, 116, 0.25);\n\tcolor: #fff;\n}\n.file.is-success.is-active .file-cta,\n.file.is-success:active .file-cta {\n\tbackground-color: #3abb67;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-warning .file-cta {\n\tbackground-color: #ffdd57;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.file.is-warning.is-hovered .file-cta,\n.file.is-warning:hover .file-cta {\n\tbackground-color: #ffdb4a;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.file.is-warning.is-focused .file-cta,\n.file.is-warning:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em rgba(255, 221, 87, 0.25);\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.file.is-warning.is-active .file-cta,\n.file.is-warning:active .file-cta {\n\tbackground-color: #ffd83d;\n\tborder-color: transparent;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.file.is-danger .file-cta {\n\tbackground-color: #f14668;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-danger.is-hovered .file-cta,\n.file.is-danger:hover .file-cta {\n\tbackground-color: #f03a5f;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-danger.is-focused .file-cta,\n.file.is-danger:focus .file-cta {\n\tborder-color: transparent;\n\tbox-shadow: 0 0 0.5em rgba(241, 70, 104, 0.25);\n\tcolor: #fff;\n}\n.file.is-danger.is-active .file-cta,\n.file.is-danger:active .file-cta {\n\tbackground-color: #ef2e55;\n\tborder-color: transparent;\n\tcolor: #fff;\n}\n.file.is-small {\n\tfont-size: 0.75rem;\n}\n.file.is-medium {\n\tfont-size: 1.25rem;\n}\n.file.is-medium .file-icon .fa {\n\tfont-size: 21px;\n}\n.file.is-large {\n\tfont-size: 1.5rem;\n}\n.file.is-large .file-icon .fa {\n\tfont-size: 28px;\n}\n.file.has-name .file-cta {\n\tborder-bottom-right-radius: 0;\n\tborder-top-right-radius: 0;\n}\n.file.has-name .file-name {\n\tborder-bottom-left-radius: 0;\n\tborder-top-left-radius: 0;\n}\n.file.has-name.is-empty .file-cta {\n\tborder-radius: 4px;\n}\n.file.has-name.is-empty .file-name {\n\tdisplay: none;\n}\n.file.is-boxed .file-label {\n\tflex-direction: column;\n}\n.file.is-boxed .file-cta {\n\tflex-direction: column;\n\theight: auto;\n\tpadding: 1em 3em;\n}\n.file.is-boxed .file-name {\n\tborder-width: 0 1px 1px;\n}\n.file.is-boxed .file-icon {\n\theight: 1.5em;\n\twidth: 1.5em;\n}\n.file.is-boxed .file-icon .fa {\n\tfont-size: 21px;\n}\n.file.is-boxed.is-small .file-icon .fa {\n\tfont-size: 14px;\n}\n.file.is-boxed.is-medium .file-icon .fa {\n\tfont-size: 28px;\n}\n.file.is-boxed.is-large .file-icon .fa {\n\tfont-size: 35px;\n}\n.file.is-boxed.has-name .file-cta {\n\tborder-radius: 4px 4px 0 0;\n}\n.file.is-boxed.has-name .file-name {\n\tborder-radius: 0 0 4px 4px;\n\tborder-width: 0 1px 1px;\n}\n.file.is-centered {\n\tjustify-content: center;\n}\n.file.is-fullwidth .file-label {\n\twidth: 100%;\n}\n.file.is-fullwidth .file-name {\n\tflex-grow: 1;\n\tmax-width: none;\n}\n.file.is-right {\n\tjustify-content: flex-end;\n}\n.file.is-right .file-cta {\n\tborder-radius: 0 4px 4px 0;\n}\n.file.is-right .file-name {\n\tborder-radius: 4px 0 0 4px;\n\tborder-width: 1px 0 1px 1px;\n\torder: -1;\n}\n.file-label {\n\talign-items: stretch;\n\tdisplay: flex;\n\tcursor: pointer;\n\tjustify-content: flex-start;\n\toverflow: hidden;\n\tposition: relative;\n}\n.file-label:hover .file-cta {\n\tbackground-color: #eee;\n\tcolor: #363636;\n}\n.file-label:hover .file-name {\n\tborder-color: #d5d5d5;\n}\n.file-label:active .file-cta {\n\tbackground-color: #e8e8e8;\n\tcolor: #363636;\n}\n.file-label:active .file-name {\n\tborder-color: #cfcfcf;\n}\n.file-input {\n\theight: 100%;\n\tleft: 0;\n\topacity: 0;\n\toutline: none;\n\tposition: absolute;\n\ttop: 0;\n\twidth: 100%;\n}\n.file-cta,\n.file-name {\n\tborder-color: #dbdbdb;\n\tborder-radius: 4px;\n\tfont-size: 1em;\n\tpadding-left: 1em;\n\tpadding-right: 1em;\n\twhite-space: nowrap;\n}\n.file-cta {\n\tbackground-color: #f5f5f5;\n\tcolor: #4a4a4a;\n}\n.file-name {\n\tborder: 1px solid #dbdbdb;\n\tborder-left-width: 0;\n\tdisplay: block;\n\tmax-width: 16em;\n\toverflow: hidden;\n\ttext-align: left;\n\ttext-overflow: ellipsis;\n}\n.file-icon {\n\talign-items: center;\n\tdisplay: flex;\n\theight: 1em;\n\tjustify-content: center;\n\tmargin-right: 0.5em;\n\twidth: 1em;\n}\n.file-icon .fa {\n\tfont-size: 14px;\n}\n.label {\n\tcolor: #363636;\n\tdisplay: block;\n\tfont-size: 1rem;\n\tfont-weight: 700;\n}\n.label:not(:last-child) {\n\tmargin-bottom: 0.5em;\n}\n.label.is-small {\n\tfont-size: 0.75rem;\n}\n.label.is-medium {\n\tfont-size: 1.25rem;\n}\n.label.is-large {\n\tfont-size: 1.5rem;\n}\n.help {\n\tdisplay: block;\n\tfont-size: 0.75rem;\n\tmargin-top: 0.25rem;\n}\n.help.is-white {\n\tcolor: #fff;\n}\n.help.is-black {\n\tcolor: #0a0a0a;\n}\n.help.is-light {\n\tcolor: #f5f5f5;\n}\n.help.is-dark {\n\tcolor: #363636;\n}\n.help.is-primary {\n\tcolor: #454545;\n}\n.help.is-link {\n\tcolor: #00d1b2;\n}\n.help.is-info {\n\tcolor: #3298dc;\n}\n.help.is-success {\n\tcolor: #48c774;\n}\n.help.is-warning {\n\tcolor: #ffdd57;\n}\n.help.is-danger {\n\tcolor: #f14668;\n}\n.field:not(:last-child) {\n\tmargin-bottom: 0.75rem;\n}\n.field.has-addons {\n\tdisplay: flex;\n\tjustify-content: flex-start;\n}\n.field.has-addons .control:not(:last-child) {\n\tmargin-right: -1px;\n}\n.field.has-addons .control:not(:first-child):not(:last-child) .button,\n.field.has-addons .control:not(:first-child):not(:last-child) .input,\n.field.has-addons .control:not(:first-child):not(:last-child) .select select {\n\tborder-radius: 0;\n}\n.field.has-addons .control:first-child:not(:only-child) .button,\n.field.has-addons .control:first-child:not(:only-child) .input,\n.field.has-addons .control:first-child:not(:only-child) .select select {\n\tborder-bottom-right-radius: 0;\n\tborder-top-right-radius: 0;\n}\n.field.has-addons .control:last-child:not(:only-child) .button,\n.field.has-addons .control:last-child:not(:only-child) .input,\n.field.has-addons .control:last-child:not(:only-child) .select select {\n\tborder-bottom-left-radius: 0;\n\tborder-top-left-radius: 0;\n}\n.field.has-addons .control .button:not([disabled]).is-hovered,\n.field.has-addons .control .button:not([disabled]):hover,\n.field.has-addons .control .input:not([disabled]).is-hovered,\n.field.has-addons .control .input:not([disabled]):hover,\n.field.has-addons .control .select select:not([disabled]).is-hovered,\n.field.has-addons .control .select select:not([disabled]):hover {\n\tz-index: 2;\n}\n.field.has-addons .control .button:not([disabled]).is-active,\n.field.has-addons .control .button:not([disabled]).is-focused,\n.field.has-addons .control .button:not([disabled]):active,\n.field.has-addons .control .button:not([disabled]):focus,\n.field.has-addons .control .input:not([disabled]).is-active,\n.field.has-addons .control .input:not([disabled]).is-focused,\n.field.has-addons .control .input:not([disabled]):active,\n.field.has-addons .control .input:not([disabled]):focus,\n.field.has-addons .control .select select:not([disabled]).is-active,\n.field.has-addons .control .select select:not([disabled]).is-focused,\n.field.has-addons .control .select select:not([disabled]):active,\n.field.has-addons .control .select select:not([disabled]):focus {\n\tz-index: 3;\n}\n.field.has-addons .control .button:not([disabled]).is-active:hover,\n.field.has-addons .control .button:not([disabled]).is-focused:hover,\n.field.has-addons .control .button:not([disabled]):active:hover,\n.field.has-addons .control .button:not([disabled]):focus:hover,\n.field.has-addons .control .input:not([disabled]).is-active:hover,\n.field.has-addons .control .input:not([disabled]).is-focused:hover,\n.field.has-addons .control .input:not([disabled]):active:hover,\n.field.has-addons .control .input:not([disabled]):focus:hover,\n.field.has-addons .control .select select:not([disabled]).is-active:hover,\n.field.has-addons .control .select select:not([disabled]).is-focused:hover,\n.field.has-addons .control .select select:not([disabled]):active:hover,\n.field.has-addons .control .select select:not([disabled]):focus:hover {\n\tz-index: 4;\n}\n.field.has-addons .control.is-expanded {\n\tflex-grow: 1;\n\tflex-shrink: 1;\n}\n.field.has-addons.has-addons-centered {\n\tjustify-content: center;\n}\n.field.has-addons.has-addons-right {\n\tjustify-content: flex-end;\n}\n.field.has-addons.has-addons-fullwidth .control {\n\tflex-grow: 1;\n\tflex-shrink: 0;\n}\n.field.is-grouped {\n\tdisplay: flex;\n\tjustify-content: flex-start;\n}\n.field.is-grouped > .control {\n\tflex-shrink: 0;\n}\n.field.is-grouped > .control:not(:last-child) {\n\tmargin-bottom: 0;\n\tmargin-right: 0.75rem;\n}\n.field.is-grouped > .control.is-expanded {\n\tflex-grow: 1;\n\tflex-shrink: 1;\n}\n.field.is-grouped.is-grouped-centered {\n\tjustify-content: center;\n}\n.field.is-grouped.is-grouped-right {\n\tjustify-content: flex-end;\n}\n.field.is-grouped.is-grouped-multiline {\n\tflex-wrap: wrap;\n}\n.field.is-grouped.is-grouped-multiline > .control:last-child,\n.field.is-grouped.is-grouped-multiline > .control:not(:last-child) {\n\tmargin-bottom: 0.75rem;\n}\n.field.is-grouped.is-grouped-multiline:last-child {\n\tmargin-bottom: -0.75rem;\n}\n.field.is-grouped.is-grouped-multiline:not(:last-child) {\n\tmargin-bottom: 0;\n}\n@media print, screen and (min-width: 769px) {\n\t.field.is-horizontal {\n\t\tdisplay: flex;\n\t}\n}\n.field-label .label {\n\tfont-size: inherit;\n}\n@media screen and (max-width: 768px) {\n\t.field-label {\n\t\tmargin-bottom: 0.5rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.field-label {\n\t\tflex-basis: 0;\n\t\tflex-grow: 1;\n\t\tflex-shrink: 0;\n\t\tmargin-right: 1.5rem;\n\t\ttext-align: right;\n\t}\n\t.field-label.is-small {\n\t\tfont-size: 0.75rem;\n\t\tpadding-top: 0.375em;\n\t}\n\t.field-label.is-normal {\n\t\tpadding-top: 0.375em;\n\t}\n\t.field-label.is-medium {\n\t\tfont-size: 1.25rem;\n\t\tpadding-top: 0.375em;\n\t}\n\t.field-label.is-large {\n\t\tfont-size: 1.5rem;\n\t\tpadding-top: 0.375em;\n\t}\n}\n.field-body .field .field {\n\tmargin-bottom: 0;\n}\n@media print, screen and (min-width: 769px) {\n\t.field-body {\n\t\tdisplay: flex;\n\t\tflex-basis: 0;\n\t\tflex-grow: 5;\n\t\tflex-shrink: 1;\n\t}\n\t.field-body .field {\n\t\tmargin-bottom: 0;\n\t}\n\t.field-body > .field {\n\t\tflex-shrink: 1;\n\t}\n\t.field-body > .field:not(.is-narrow) {\n\t\tflex-grow: 1;\n\t}\n\t.field-body > .field:not(:last-child) {\n\t\tmargin-right: 0.75rem;\n\t}\n}\n.control {\n\tbox-sizing: border-box;\n\tclear: both;\n\tfont-size: 1rem;\n\tposition: relative;\n\ttext-align: left;\n}\n.control.has-icons-left .input:focus ~ .icon,\n.control.has-icons-left .select:focus ~ .icon,\n.control.has-icons-right .input:focus ~ .icon,\n.control.has-icons-right .select:focus ~ .icon {\n\tcolor: #4a4a4a;\n}\n.control.has-icons-left .input.is-small ~ .icon,\n.control.has-icons-left .select.is-small ~ .icon,\n.control.has-icons-right .input.is-small ~ .icon,\n.control.has-icons-right .select.is-small ~ .icon {\n\tfont-size: 0.75rem;\n}\n.control.has-icons-left .input.is-medium ~ .icon,\n.control.has-icons-left .select.is-medium ~ .icon,\n.control.has-icons-right .input.is-medium ~ .icon,\n.control.has-icons-right .select.is-medium ~ .icon {\n\tfont-size: 1.25rem;\n}\n.control.has-icons-left .input.is-large ~ .icon,\n.control.has-icons-left .select.is-large ~ .icon,\n.control.has-icons-right .input.is-large ~ .icon,\n.control.has-icons-right .select.is-large ~ .icon {\n\tfont-size: 1.5rem;\n}\n.control.has-icons-left .icon,\n.control.has-icons-right .icon {\n\tcolor: #dbdbdb;\n\theight: 2.5em;\n\tpointer-events: none;\n\tposition: absolute;\n\ttop: 0;\n\twidth: 2.5em;\n\tz-index: 4;\n}\n.control.has-icons-left .input,\n.control.has-icons-left .select select {\n\tpadding-left: 2.5em;\n}\n.control.has-icons-left .icon.is-left {\n\tleft: 0;\n}\n.control.has-icons-right .input,\n.control.has-icons-right .select select {\n\tpadding-right: 2.5em;\n}\n.control.has-icons-right .icon.is-right {\n\tright: 0;\n}\n.control.is-loading:after {\n\tposition: absolute !important;\n\tright: 0.625em;\n\ttop: 0.625em;\n\tz-index: 4;\n}\n.control.is-loading.is-small:after {\n\tfont-size: 0.75rem;\n}\n.control.is-loading.is-medium:after {\n\tfont-size: 1.25rem;\n}\n.control.is-loading.is-large:after {\n\tfont-size: 1.5rem;\n}\n.breadcrumb {\n\tfont-size: 1rem;\n\twhite-space: nowrap;\n}\n.breadcrumb a {\n\talign-items: center;\n\tcolor: #00d1b2;\n\tdisplay: flex;\n\tjustify-content: center;\n\tpadding: 0 0.75em;\n}\n.breadcrumb a:hover {\n\tcolor: #363636;\n}\n.breadcrumb li {\n\talign-items: center;\n\tdisplay: flex;\n}\n.breadcrumb li:first-child a {\n\tpadding-left: 0;\n}\n.breadcrumb li.is-active a {\n\tcolor: #363636;\n\tcursor: default;\n\tpointer-events: none;\n}\n.breadcrumb li + li:before {\n\tcolor: #b5b5b5;\n\tcontent: \"\\0002f\";\n}\n.breadcrumb ol,\n.breadcrumb ul {\n\talign-items: flex-start;\n\tdisplay: flex;\n\tflex-wrap: wrap;\n\tjustify-content: flex-start;\n}\n.breadcrumb .icon:first-child {\n\tmargin-right: 0.5em;\n}\n.breadcrumb .icon:last-child {\n\tmargin-left: 0.5em;\n}\n.breadcrumb.is-centered ol,\n.breadcrumb.is-centered ul {\n\tjustify-content: center;\n}\n.breadcrumb.is-right ol,\n.breadcrumb.is-right ul {\n\tjustify-content: flex-end;\n}\n.breadcrumb.is-small {\n\tfont-size: 0.75rem;\n}\n.breadcrumb.is-medium {\n\tfont-size: 1.25rem;\n}\n.breadcrumb.is-large {\n\tfont-size: 1.5rem;\n}\n.breadcrumb.has-arrow-separator li + li:before {\n\tcontent: \"\\02192\";\n}\n.breadcrumb.has-bullet-separator li + li:before {\n\tcontent: \"\\02022\";\n}\n.breadcrumb.has-dot-separator li + li:before {\n\tcontent: \"\\000b7\";\n}\n.breadcrumb.has-succeeds-separator li + li:before {\n\tcontent: \"\\0227B\";\n}\n.card {\n\tbackground-color: #fff;\n\tbox-shadow: 0 0.5em 1em -0.125em rgba(10, 10, 10, 0.1),\n\t\t0 0 0 1px rgba(10, 10, 10, 0.02);\n\tcolor: #4a4a4a;\n\tmax-width: 100%;\n\tposition: relative;\n}\n.card-header {\n\tbackground-color: transparent;\n\talign-items: stretch;\n\tbox-shadow: 0 0.125em 0.25em rgba(10, 10, 10, 0.1);\n\tdisplay: flex;\n}\n.card-header-title {\n\talign-items: center;\n\tcolor: #363636;\n\tdisplay: flex;\n\tflex-grow: 1;\n\tfont-weight: 700;\n\tpadding: 0.75rem 1rem;\n}\n.card-header-icon,\n.card-header-title.is-centered {\n\tjustify-content: center;\n}\n.card-header-icon {\n\talign-items: center;\n\tcursor: pointer;\n\tdisplay: flex;\n\tpadding: 0.75rem 1rem;\n}\n.card-image {\n\tdisplay: block;\n\tposition: relative;\n}\n.card-content {\n\tpadding: 1.5rem;\n}\n.card-content,\n.card-footer {\n\tbackground-color: transparent;\n}\n.card-footer {\n\tborder-top: 1px solid #ededed;\n\talign-items: stretch;\n\tdisplay: flex;\n}\n.card-footer-item {\n\talign-items: center;\n\tdisplay: flex;\n\tflex-basis: 0;\n\tflex-grow: 1;\n\tflex-shrink: 0;\n\tjustify-content: center;\n\tpadding: 0.75rem;\n}\n.card-footer-item:not(:last-child) {\n\tborder-right: 1px solid #ededed;\n}\n.card .media:not(:last-child) {\n\tmargin-bottom: 1.5rem;\n}\n.dropdown {\n\tdisplay: inline-flex;\n\tposition: relative;\n\tvertical-align: top;\n}\n.dropdown.is-active .dropdown-menu,\n.dropdown.is-hoverable:hover .dropdown-menu {\n\tdisplay: block;\n}\n.dropdown.is-right .dropdown-menu {\n\tleft: auto;\n\tright: 0;\n}\n.dropdown.is-up .dropdown-menu {\n\tbottom: 100%;\n\tpadding-bottom: 4px;\n\tpadding-top: 0;\n\ttop: auto;\n}\n.dropdown-menu {\n\tdisplay: none;\n\tleft: 0;\n\tmin-width: 12rem;\n\tpadding-top: 4px;\n\tposition: absolute;\n\ttop: 100%;\n\tz-index: 20;\n}\n.dropdown-content {\n\tbackground-color: #fff;\n\tborder-radius: 4px;\n\tbox-shadow: 0 0.5em 1em -0.125em rgba(10, 10, 10, 0.1),\n\t\t0 0 0 1px rgba(10, 10, 10, 0.02);\n\tpadding-bottom: 0.5rem;\n\tpadding-top: 0.5rem;\n}\n.dropdown-item {\n\tcolor: #4a4a4a;\n\tdisplay: block;\n\tfont-size: 0.875rem;\n\tline-height: 1.5;\n\tpadding: 0.375rem 1rem;\n\tposition: relative;\n}\na.dropdown-item,\nbutton.dropdown-item {\n\tpadding-right: 3rem;\n\ttext-align: left;\n\twhite-space: nowrap;\n\twidth: 100%;\n}\na.dropdown-item:hover,\nbutton.dropdown-item:hover {\n\tbackground-color: #f5f5f5;\n\tcolor: #0a0a0a;\n}\na.dropdown-item.is-active,\nbutton.dropdown-item.is-active {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\n.dropdown-divider {\n\tbackground-color: #ededed;\n\tborder: none;\n\tdisplay: block;\n\theight: 1px;\n\tmargin: 0.5rem 0;\n}\n.level {\n\talign-items: center;\n\tjustify-content: space-between;\n}\n.level code {\n\tborder-radius: 4px;\n}\n.level img {\n\tdisplay: inline-block;\n\tvertical-align: top;\n}\n.level.is-mobile,\n.level.is-mobile .level-left,\n.level.is-mobile .level-right {\n\tdisplay: flex;\n}\n.level.is-mobile .level-left + .level-right {\n\tmargin-top: 0;\n}\n.level.is-mobile .level-item:not(:last-child) {\n\tmargin-bottom: 0;\n\tmargin-right: 0.75rem;\n}\n.level.is-mobile .level-item:not(.is-narrow) {\n\tflex-grow: 1;\n}\n@media print, screen and (min-width: 769px) {\n\t.level {\n\t\tdisplay: flex;\n\t}\n\t.level > .level-item:not(.is-narrow) {\n\t\tflex-grow: 1;\n\t}\n}\n.level-item {\n\talign-items: center;\n\tdisplay: flex;\n\tflex-basis: auto;\n\tflex-grow: 0;\n\tflex-shrink: 0;\n\tjustify-content: center;\n}\n.level-item .subtitle,\n.level-item .title {\n\tmargin-bottom: 0;\n}\n@media screen and (max-width: 768px) {\n\t.level-item:not(:last-child) {\n\t\tmargin-bottom: 0.75rem;\n\t}\n}\n.level-left,\n.level-right {\n\tflex-basis: auto;\n\tflex-grow: 0;\n\tflex-shrink: 0;\n}\n.level-left .level-item.is-flexible,\n.level-right .level-item.is-flexible {\n\tflex-grow: 1;\n}\n@media print, screen and (min-width: 769px) {\n\t.level-left .level-item:not(:last-child),\n\t.level-right .level-item:not(:last-child) {\n\t\tmargin-right: 0.75rem;\n\t}\n}\n.level-left {\n\talign-items: center;\n\tjustify-content: flex-start;\n}\n@media screen and (max-width: 768px) {\n\t.level-left + .level-right {\n\t\tmargin-top: 1.5rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.level-left {\n\t\tdisplay: flex;\n\t}\n}\n.level-right {\n\talign-items: center;\n\tjustify-content: flex-end;\n}\n@media print, screen and (min-width: 769px) {\n\t.level-right {\n\t\tdisplay: flex;\n\t}\n}\n.list {\n\tbackground-color: #fff;\n\tborder-radius: 4px;\n\tbox-shadow: 0 2px 3px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);\n}\n.list-item {\n\tdisplay: block;\n\tpadding: 0.5em 1em;\n}\n.list-item:not(a) {\n\tcolor: #4a4a4a;\n}\n.list-item:first-child {\n\tborder-top-left-radius: 4px;\n\tborder-top-right-radius: 4px;\n}\n.list-item:last-child {\n\tborder-bottom-left-radius: 4px;\n\tborder-bottom-right-radius: 4px;\n}\n.list-item:not(:last-child) {\n\tborder-bottom: 1px solid #dbdbdb;\n}\n.list-item.is-active {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\na.list-item {\n\tbackground-color: #f5f5f5;\n\tcursor: pointer;\n}\n.media {\n\talign-items: flex-start;\n\tdisplay: flex;\n\ttext-align: left;\n}\n.media .content:not(:last-child) {\n\tmargin-bottom: 0.75rem;\n}\n.media .media {\n\tborder-top: 1px solid hsla(0, 0%, 85.9%, 0.5);\n\tdisplay: flex;\n\tpadding-top: 0.75rem;\n}\n.media .media .content:not(:last-child),\n.media .media .control:not(:last-child) {\n\tmargin-bottom: 0.5rem;\n}\n.media .media .media {\n\tpadding-top: 0.5rem;\n}\n.media .media .media + .media {\n\tmargin-top: 0.5rem;\n}\n.media + .media {\n\tborder-top: 1px solid hsla(0, 0%, 85.9%, 0.5);\n\tmargin-top: 1rem;\n\tpadding-top: 1rem;\n}\n.media.is-large + .media {\n\tmargin-top: 1.5rem;\n\tpadding-top: 1.5rem;\n}\n.media-left,\n.media-right {\n\tflex-basis: auto;\n\tflex-grow: 0;\n\tflex-shrink: 0;\n}\n.media-left {\n\tmargin-right: 1rem;\n}\n.media-right {\n\tmargin-left: 1rem;\n}\n.media-content {\n\tflex-basis: auto;\n\tflex-grow: 1;\n\tflex-shrink: 1;\n\ttext-align: left;\n}\n@media screen and (max-width: 768px) {\n\t.media-content {\n\t\toverflow-x: auto;\n\t}\n}\n.menu {\n\tfont-size: 1rem;\n}\n.menu.is-small {\n\tfont-size: 0.75rem;\n}\n.menu.is-medium {\n\tfont-size: 1.25rem;\n}\n.menu.is-large {\n\tfont-size: 1.5rem;\n}\n.menu-list {\n\tline-height: 1.25;\n}\n.menu-list a {\n\tborder-radius: 2px;\n\tcolor: #4a4a4a;\n\tdisplay: block;\n\tpadding: 0.5em 0.75em;\n}\n.menu-list a:hover {\n\tbackground-color: #f5f5f5;\n\tcolor: #363636;\n}\n.menu-list a.is-active {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\n.menu-list li ul {\n\tborder-left: 1px solid #dbdbdb;\n\tmargin: 0.75em;\n\tpadding-left: 0.75em;\n}\n.menu-label {\n\tcolor: #7a7a7a;\n\tfont-size: 0.75em;\n\tletter-spacing: 0.1em;\n\ttext-transform: uppercase;\n}\n.menu-label:not(:first-child) {\n\tmargin-top: 1em;\n}\n.menu-label:not(:last-child) {\n\tmargin-bottom: 1em;\n}\n.message {\n\tbackground-color: #f5f5f5;\n\tborder-radius: 4px;\n\tfont-size: 1rem;\n}\n.message strong {\n\tcolor: currentColor;\n}\n.message a:not(.button):not(.tag):not(.dropdown-item) {\n\tcolor: currentColor;\n\ttext-decoration: underline;\n}\n.message.is-small {\n\tfont-size: 0.75rem;\n}\n.message.is-medium {\n\tfont-size: 1.25rem;\n}\n.message.is-large {\n\tfont-size: 1.5rem;\n}\n.message.is-white {\n\tbackground-color: #fff;\n}\n.message.is-white .message-header {\n\tbackground-color: #fff;\n\tcolor: #0a0a0a;\n}\n.message.is-white .message-body {\n\tborder-color: #fff;\n}\n.message.is-black {\n\tbackground-color: #fafafa;\n}\n.message.is-black .message-header {\n\tbackground-color: #0a0a0a;\n\tcolor: #fff;\n}\n.message.is-black .message-body {\n\tborder-color: #0a0a0a;\n}\n.message.is-light {\n\tbackground-color: #fafafa;\n}\n.message.is-light .message-header {\n\tbackground-color: #f5f5f5;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.message.is-light .message-body {\n\tborder-color: #f5f5f5;\n}\n.message.is-dark {\n\tbackground-color: #fafafa;\n}\n.message.is-dark .message-header {\n\tbackground-color: #363636;\n\tcolor: #fff;\n}\n.message.is-dark .message-body {\n\tborder-color: #363636;\n}\n.message.is-primary {\n\tbackground-color: #f5f5f5;\n}\n.message.is-primary .message-header {\n\tbackground-color: #454545;\n\tcolor: #fff;\n}\n.message.is-primary .message-body {\n\tborder-color: #454545;\n\tcolor: #858585;\n}\n.message.is-link {\n\tbackground-color: #ebfffc;\n}\n.message.is-link .message-header {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\n.message.is-link .message-body {\n\tborder-color: #00d1b2;\n\tcolor: #00947e;\n}\n.message.is-info {\n\tbackground-color: #eef6fc;\n}\n.message.is-info .message-header {\n\tbackground-color: #3298dc;\n\tcolor: #fff;\n}\n.message.is-info .message-body {\n\tborder-color: #3298dc;\n\tcolor: #1d72aa;\n}\n.message.is-success {\n\tbackground-color: #effaf3;\n}\n.message.is-success .message-header {\n\tbackground-color: #48c774;\n\tcolor: #fff;\n}\n.message.is-success .message-body {\n\tborder-color: #48c774;\n\tcolor: #257942;\n}\n.message.is-warning {\n\tbackground-color: #fffbeb;\n}\n.message.is-warning .message-header {\n\tbackground-color: #ffdd57;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.message.is-warning .message-body {\n\tborder-color: #ffdd57;\n\tcolor: #947600;\n}\n.message.is-danger {\n\tbackground-color: #feecf0;\n}\n.message.is-danger .message-header {\n\tbackground-color: #f14668;\n\tcolor: #fff;\n}\n.message.is-danger .message-body {\n\tborder-color: #f14668;\n\tcolor: #cc0f35;\n}\n.message-header {\n\talign-items: center;\n\tbackground-color: #4a4a4a;\n\tborder-radius: 4px 4px 0 0;\n\tcolor: #fff;\n\tdisplay: flex;\n\tfont-weight: 700;\n\tjustify-content: space-between;\n\tline-height: 1.25;\n\tpadding: 0.75em 1em;\n\tposition: relative;\n}\n.message-header .delete {\n\tflex-grow: 0;\n\tflex-shrink: 0;\n\tmargin-left: 0.75em;\n}\n.message-header + .message-body {\n\tborder-width: 0;\n\tborder-top-left-radius: 0;\n\tborder-top-right-radius: 0;\n}\n.message-body {\n\tborder-radius: 4px;\n\tborder: solid #dbdbdb;\n\tborder-width: 0 0 0 4px;\n\tcolor: #4a4a4a;\n\tpadding: 1.25em 1.5em;\n}\n.message-body code,\n.message-body pre {\n\tbackground-color: #fff;\n}\n.message-body pre code {\n\tbackground-color: transparent;\n}\n.modal {\n\talign-items: center;\n\tdisplay: none;\n\tflex-direction: column;\n\tjustify-content: center;\n\toverflow: hidden;\n\tposition: fixed;\n\tz-index: 40;\n}\n.modal.is-active {\n\tdisplay: flex;\n}\n.modal-background {\n\tbackground-color: rgba(10, 10, 10, 0.86);\n}\n.modal-card,\n.modal-content {\n\tmargin: 0 20px;\n\tmax-height: calc(100vh - 160px);\n\toverflow: auto;\n\tposition: relative;\n\twidth: 100%;\n}\n@media print, screen and (min-width: 769px) {\n\t.modal-card,\n\t.modal-content {\n\t\tmargin: 0 auto;\n\t\tmax-height: calc(100vh - 40px);\n\t\twidth: 640px;\n\t}\n}\n.modal-close {\n\tbackground: none;\n\theight: 40px;\n\tposition: fixed;\n\tright: 20px;\n\ttop: 20px;\n\twidth: 40px;\n}\n.modal-card {\n\tdisplay: flex;\n\tflex-direction: column;\n\tmax-height: calc(100vh - 40px);\n\toverflow: hidden;\n\t-ms-overflow-y: visible;\n}\n.modal-card-foot,\n.modal-card-head {\n\talign-items: center;\n\tbackground-color: #f5f5f5;\n\tdisplay: flex;\n\tflex-shrink: 0;\n\tjustify-content: flex-start;\n\tpadding: 20px;\n\tposition: relative;\n}\n.modal-card-head {\n\tborder-bottom: 1px solid #dbdbdb;\n\tborder-top-left-radius: 6px;\n\tborder-top-right-radius: 6px;\n}\n.modal-card-title {\n\tcolor: #363636;\n\tflex-grow: 1;\n\tflex-shrink: 0;\n\tfont-size: 1.5rem;\n\tline-height: 1;\n}\n.modal-card-foot {\n\tborder-bottom-left-radius: 6px;\n\tborder-bottom-right-radius: 6px;\n\tborder-top: 1px solid #dbdbdb;\n}\n.modal-card-foot .button:not(:last-child) {\n\tmargin-right: 0.5em;\n}\n.modal-card-body {\n\t-webkit-overflow-scrolling: touch;\n\tbackground-color: #fff;\n\tflex-grow: 1;\n\tflex-shrink: 1;\n\toverflow: auto;\n\tpadding: 20px;\n}\n.navbar {\n\tbackground-color: #fff;\n\tmin-height: 3.25rem;\n\tposition: relative;\n\tz-index: 30;\n}\n.navbar.is-white {\n\tbackground-color: #fff;\n\tcolor: #0a0a0a;\n}\n.navbar.is-white .navbar-brand .navbar-link,\n.navbar.is-white .navbar-brand > .navbar-item {\n\tcolor: #0a0a0a;\n}\n.navbar.is-white .navbar-brand .navbar-link.is-active,\n.navbar.is-white .navbar-brand .navbar-link:focus,\n.navbar.is-white .navbar-brand .navbar-link:hover,\n.navbar.is-white .navbar-brand > a.navbar-item.is-active,\n.navbar.is-white .navbar-brand > a.navbar-item:focus,\n.navbar.is-white .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #f2f2f2;\n\tcolor: #0a0a0a;\n}\n.navbar.is-white .navbar-brand .navbar-link:after {\n\tborder-color: #0a0a0a;\n}\n.navbar.is-white .navbar-burger {\n\tcolor: #0a0a0a;\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-white .navbar-end .navbar-link,\n\t.navbar.is-white .navbar-end > .navbar-item,\n\t.navbar.is-white .navbar-start .navbar-link,\n\t.navbar.is-white .navbar-start > .navbar-item {\n\t\tcolor: #0a0a0a;\n\t}\n\t.navbar.is-white .navbar-end .navbar-link.is-active,\n\t.navbar.is-white .navbar-end .navbar-link:focus,\n\t.navbar.is-white .navbar-end .navbar-link:hover,\n\t.navbar.is-white .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-white .navbar-end > a.navbar-item:focus,\n\t.navbar.is-white .navbar-end > a.navbar-item:hover,\n\t.navbar.is-white .navbar-start .navbar-link.is-active,\n\t.navbar.is-white .navbar-start .navbar-link:focus,\n\t.navbar.is-white .navbar-start .navbar-link:hover,\n\t.navbar.is-white .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-white .navbar-start > a.navbar-item:focus,\n\t.navbar.is-white .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #f2f2f2;\n\t\tcolor: #0a0a0a;\n\t}\n\t.navbar.is-white .navbar-end .navbar-link:after,\n\t.navbar.is-white .navbar-start .navbar-link:after {\n\t\tborder-color: #0a0a0a;\n\t}\n\t.navbar.is-white .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-white .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-white .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #f2f2f2;\n\t\tcolor: #0a0a0a;\n\t}\n\t.navbar.is-white .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #fff;\n\t\tcolor: #0a0a0a;\n\t}\n}\n.navbar.is-black {\n\tbackground-color: #0a0a0a;\n\tcolor: #fff;\n}\n.navbar.is-black .navbar-brand .navbar-link,\n.navbar.is-black .navbar-brand > .navbar-item {\n\tcolor: #fff;\n}\n.navbar.is-black .navbar-brand .navbar-link.is-active,\n.navbar.is-black .navbar-brand .navbar-link:focus,\n.navbar.is-black .navbar-brand .navbar-link:hover,\n.navbar.is-black .navbar-brand > a.navbar-item.is-active,\n.navbar.is-black .navbar-brand > a.navbar-item:focus,\n.navbar.is-black .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #000;\n\tcolor: #fff;\n}\n.navbar.is-black .navbar-brand .navbar-link:after {\n\tborder-color: #fff;\n}\n.navbar.is-black .navbar-burger {\n\tcolor: #fff;\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-black .navbar-end .navbar-link,\n\t.navbar.is-black .navbar-end > .navbar-item,\n\t.navbar.is-black .navbar-start .navbar-link,\n\t.navbar.is-black .navbar-start > .navbar-item {\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-black .navbar-end .navbar-link.is-active,\n\t.navbar.is-black .navbar-end .navbar-link:focus,\n\t.navbar.is-black .navbar-end .navbar-link:hover,\n\t.navbar.is-black .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-black .navbar-end > a.navbar-item:focus,\n\t.navbar.is-black .navbar-end > a.navbar-item:hover,\n\t.navbar.is-black .navbar-start .navbar-link.is-active,\n\t.navbar.is-black .navbar-start .navbar-link:focus,\n\t.navbar.is-black .navbar-start .navbar-link:hover,\n\t.navbar.is-black .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-black .navbar-start > a.navbar-item:focus,\n\t.navbar.is-black .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #000;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-black .navbar-end .navbar-link:after,\n\t.navbar.is-black .navbar-start .navbar-link:after {\n\t\tborder-color: #fff;\n\t}\n\t.navbar.is-black .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-black .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-black .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #000;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-black .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #0a0a0a;\n\t\tcolor: #fff;\n\t}\n}\n.navbar.is-light {\n\tbackground-color: #f5f5f5;\n}\n.navbar.is-light,\n.navbar.is-light .navbar-brand .navbar-link,\n.navbar.is-light .navbar-brand > .navbar-item {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.navbar.is-light .navbar-brand .navbar-link.is-active,\n.navbar.is-light .navbar-brand .navbar-link:focus,\n.navbar.is-light .navbar-brand .navbar-link:hover,\n.navbar.is-light .navbar-brand > a.navbar-item.is-active,\n.navbar.is-light .navbar-brand > a.navbar-item:focus,\n.navbar.is-light .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #e8e8e8;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.navbar.is-light .navbar-brand .navbar-link:after {\n\tborder-color: rgba(0, 0, 0, 0.7);\n}\n.navbar.is-light .navbar-burger {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-light .navbar-end .navbar-link,\n\t.navbar.is-light .navbar-end > .navbar-item,\n\t.navbar.is-light .navbar-start .navbar-link,\n\t.navbar.is-light .navbar-start > .navbar-item {\n\t\tcolor: rgba(0, 0, 0, 0.7);\n\t}\n\t.navbar.is-light .navbar-end .navbar-link.is-active,\n\t.navbar.is-light .navbar-end .navbar-link:focus,\n\t.navbar.is-light .navbar-end .navbar-link:hover,\n\t.navbar.is-light .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-light .navbar-end > a.navbar-item:focus,\n\t.navbar.is-light .navbar-end > a.navbar-item:hover,\n\t.navbar.is-light .navbar-start .navbar-link.is-active,\n\t.navbar.is-light .navbar-start .navbar-link:focus,\n\t.navbar.is-light .navbar-start .navbar-link:hover,\n\t.navbar.is-light .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-light .navbar-start > a.navbar-item:focus,\n\t.navbar.is-light .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #e8e8e8;\n\t\tcolor: rgba(0, 0, 0, 0.7);\n\t}\n\t.navbar.is-light .navbar-end .navbar-link:after,\n\t.navbar.is-light .navbar-start .navbar-link:after {\n\t\tborder-color: rgba(0, 0, 0, 0.7);\n\t}\n\t.navbar.is-light .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-light .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-light .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #e8e8e8;\n\t\tcolor: rgba(0, 0, 0, 0.7);\n\t}\n\t.navbar.is-light .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #f5f5f5;\n\t\tcolor: rgba(0, 0, 0, 0.7);\n\t}\n}\n.navbar.is-dark {\n\tbackground-color: #363636;\n\tcolor: #fff;\n}\n.navbar.is-dark .navbar-brand .navbar-link,\n.navbar.is-dark .navbar-brand > .navbar-item {\n\tcolor: #fff;\n}\n.navbar.is-dark .navbar-brand .navbar-link.is-active,\n.navbar.is-dark .navbar-brand .navbar-link:focus,\n.navbar.is-dark .navbar-brand .navbar-link:hover,\n.navbar.is-dark .navbar-brand > a.navbar-item.is-active,\n.navbar.is-dark .navbar-brand > a.navbar-item:focus,\n.navbar.is-dark .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #292929;\n\tcolor: #fff;\n}\n.navbar.is-dark .navbar-brand .navbar-link:after {\n\tborder-color: #fff;\n}\n.navbar.is-dark .navbar-burger {\n\tcolor: #fff;\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-dark .navbar-end .navbar-link,\n\t.navbar.is-dark .navbar-end > .navbar-item,\n\t.navbar.is-dark .navbar-start .navbar-link,\n\t.navbar.is-dark .navbar-start > .navbar-item {\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-dark .navbar-end .navbar-link.is-active,\n\t.navbar.is-dark .navbar-end .navbar-link:focus,\n\t.navbar.is-dark .navbar-end .navbar-link:hover,\n\t.navbar.is-dark .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-dark .navbar-end > a.navbar-item:focus,\n\t.navbar.is-dark .navbar-end > a.navbar-item:hover,\n\t.navbar.is-dark .navbar-start .navbar-link.is-active,\n\t.navbar.is-dark .navbar-start .navbar-link:focus,\n\t.navbar.is-dark .navbar-start .navbar-link:hover,\n\t.navbar.is-dark .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-dark .navbar-start > a.navbar-item:focus,\n\t.navbar.is-dark .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #292929;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-dark .navbar-end .navbar-link:after,\n\t.navbar.is-dark .navbar-start .navbar-link:after {\n\t\tborder-color: #fff;\n\t}\n\t.navbar.is-dark .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-dark .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-dark .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #292929;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-dark .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #363636;\n\t\tcolor: #fff;\n\t}\n}\n.navbar.is-primary {\n\tbackground-color: #454545;\n\tcolor: #fff;\n}\n.navbar.is-primary .navbar-brand .navbar-link,\n.navbar.is-primary .navbar-brand > .navbar-item {\n\tcolor: #fff;\n}\n.navbar.is-primary .navbar-brand .navbar-link.is-active,\n.navbar.is-primary .navbar-brand .navbar-link:focus,\n.navbar.is-primary .navbar-brand .navbar-link:hover,\n.navbar.is-primary .navbar-brand > a.navbar-item.is-active,\n.navbar.is-primary .navbar-brand > a.navbar-item:focus,\n.navbar.is-primary .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #383838;\n\tcolor: #fff;\n}\n.navbar.is-primary .navbar-brand .navbar-link:after {\n\tborder-color: #fff;\n}\n.navbar.is-primary .navbar-burger {\n\tcolor: #fff;\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-primary .navbar-end .navbar-link,\n\t.navbar.is-primary .navbar-end > .navbar-item,\n\t.navbar.is-primary .navbar-start .navbar-link,\n\t.navbar.is-primary .navbar-start > .navbar-item {\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-primary .navbar-end .navbar-link.is-active,\n\t.navbar.is-primary .navbar-end .navbar-link:focus,\n\t.navbar.is-primary .navbar-end .navbar-link:hover,\n\t.navbar.is-primary .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-primary .navbar-end > a.navbar-item:focus,\n\t.navbar.is-primary .navbar-end > a.navbar-item:hover,\n\t.navbar.is-primary .navbar-start .navbar-link.is-active,\n\t.navbar.is-primary .navbar-start .navbar-link:focus,\n\t.navbar.is-primary .navbar-start .navbar-link:hover,\n\t.navbar.is-primary .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-primary .navbar-start > a.navbar-item:focus,\n\t.navbar.is-primary .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #383838;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-primary .navbar-end .navbar-link:after,\n\t.navbar.is-primary .navbar-start .navbar-link:after {\n\t\tborder-color: #fff;\n\t}\n\t.navbar.is-primary .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-primary .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-primary .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #383838;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-primary .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #454545;\n\t\tcolor: #fff;\n\t}\n}\n.navbar.is-link {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\n.navbar.is-link .navbar-brand .navbar-link,\n.navbar.is-link .navbar-brand > .navbar-item {\n\tcolor: #fff;\n}\n.navbar.is-link .navbar-brand .navbar-link.is-active,\n.navbar.is-link .navbar-brand .navbar-link:focus,\n.navbar.is-link .navbar-brand .navbar-link:hover,\n.navbar.is-link .navbar-brand > a.navbar-item.is-active,\n.navbar.is-link .navbar-brand > a.navbar-item:focus,\n.navbar.is-link .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #00b89c;\n\tcolor: #fff;\n}\n.navbar.is-link .navbar-brand .navbar-link:after {\n\tborder-color: #fff;\n}\n.navbar.is-link .navbar-burger {\n\tcolor: #fff;\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-link .navbar-end .navbar-link,\n\t.navbar.is-link .navbar-end > .navbar-item,\n\t.navbar.is-link .navbar-start .navbar-link,\n\t.navbar.is-link .navbar-start > .navbar-item {\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-link .navbar-end .navbar-link.is-active,\n\t.navbar.is-link .navbar-end .navbar-link:focus,\n\t.navbar.is-link .navbar-end .navbar-link:hover,\n\t.navbar.is-link .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-link .navbar-end > a.navbar-item:focus,\n\t.navbar.is-link .navbar-end > a.navbar-item:hover,\n\t.navbar.is-link .navbar-start .navbar-link.is-active,\n\t.navbar.is-link .navbar-start .navbar-link:focus,\n\t.navbar.is-link .navbar-start .navbar-link:hover,\n\t.navbar.is-link .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-link .navbar-start > a.navbar-item:focus,\n\t.navbar.is-link .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #00b89c;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-link .navbar-end .navbar-link:after,\n\t.navbar.is-link .navbar-start .navbar-link:after {\n\t\tborder-color: #fff;\n\t}\n\t.navbar.is-link .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-link .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-link .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #00b89c;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-link .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #00d1b2;\n\t\tcolor: #fff;\n\t}\n}\n.navbar.is-info {\n\tbackground-color: #3298dc;\n\tcolor: #fff;\n}\n.navbar.is-info .navbar-brand .navbar-link,\n.navbar.is-info .navbar-brand > .navbar-item {\n\tcolor: #fff;\n}\n.navbar.is-info .navbar-brand .navbar-link.is-active,\n.navbar.is-info .navbar-brand .navbar-link:focus,\n.navbar.is-info .navbar-brand .navbar-link:hover,\n.navbar.is-info .navbar-brand > a.navbar-item.is-active,\n.navbar.is-info .navbar-brand > a.navbar-item:focus,\n.navbar.is-info .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #238cd1;\n\tcolor: #fff;\n}\n.navbar.is-info .navbar-brand .navbar-link:after {\n\tborder-color: #fff;\n}\n.navbar.is-info .navbar-burger {\n\tcolor: #fff;\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-info .navbar-end .navbar-link,\n\t.navbar.is-info .navbar-end > .navbar-item,\n\t.navbar.is-info .navbar-start .navbar-link,\n\t.navbar.is-info .navbar-start > .navbar-item {\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-info .navbar-end .navbar-link.is-active,\n\t.navbar.is-info .navbar-end .navbar-link:focus,\n\t.navbar.is-info .navbar-end .navbar-link:hover,\n\t.navbar.is-info .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-info .navbar-end > a.navbar-item:focus,\n\t.navbar.is-info .navbar-end > a.navbar-item:hover,\n\t.navbar.is-info .navbar-start .navbar-link.is-active,\n\t.navbar.is-info .navbar-start .navbar-link:focus,\n\t.navbar.is-info .navbar-start .navbar-link:hover,\n\t.navbar.is-info .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-info .navbar-start > a.navbar-item:focus,\n\t.navbar.is-info .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #238cd1;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-info .navbar-end .navbar-link:after,\n\t.navbar.is-info .navbar-start .navbar-link:after {\n\t\tborder-color: #fff;\n\t}\n\t.navbar.is-info .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-info .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-info .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #238cd1;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-info .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #3298dc;\n\t\tcolor: #fff;\n\t}\n}\n.navbar.is-success {\n\tbackground-color: #48c774;\n\tcolor: #fff;\n}\n.navbar.is-success .navbar-brand .navbar-link,\n.navbar.is-success .navbar-brand > .navbar-item {\n\tcolor: #fff;\n}\n.navbar.is-success .navbar-brand .navbar-link.is-active,\n.navbar.is-success .navbar-brand .navbar-link:focus,\n.navbar.is-success .navbar-brand .navbar-link:hover,\n.navbar.is-success .navbar-brand > a.navbar-item.is-active,\n.navbar.is-success .navbar-brand > a.navbar-item:focus,\n.navbar.is-success .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #3abb67;\n\tcolor: #fff;\n}\n.navbar.is-success .navbar-brand .navbar-link:after {\n\tborder-color: #fff;\n}\n.navbar.is-success .navbar-burger {\n\tcolor: #fff;\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-success .navbar-end .navbar-link,\n\t.navbar.is-success .navbar-end > .navbar-item,\n\t.navbar.is-success .navbar-start .navbar-link,\n\t.navbar.is-success .navbar-start > .navbar-item {\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-success .navbar-end .navbar-link.is-active,\n\t.navbar.is-success .navbar-end .navbar-link:focus,\n\t.navbar.is-success .navbar-end .navbar-link:hover,\n\t.navbar.is-success .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-success .navbar-end > a.navbar-item:focus,\n\t.navbar.is-success .navbar-end > a.navbar-item:hover,\n\t.navbar.is-success .navbar-start .navbar-link.is-active,\n\t.navbar.is-success .navbar-start .navbar-link:focus,\n\t.navbar.is-success .navbar-start .navbar-link:hover,\n\t.navbar.is-success .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-success .navbar-start > a.navbar-item:focus,\n\t.navbar.is-success .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #3abb67;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-success .navbar-end .navbar-link:after,\n\t.navbar.is-success .navbar-start .navbar-link:after {\n\t\tborder-color: #fff;\n\t}\n\t.navbar.is-success .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-success .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-success .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #3abb67;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-success .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #48c774;\n\t\tcolor: #fff;\n\t}\n}\n.navbar.is-warning {\n\tbackground-color: #ffdd57;\n}\n.navbar.is-warning,\n.navbar.is-warning .navbar-brand .navbar-link,\n.navbar.is-warning .navbar-brand > .navbar-item {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.navbar.is-warning .navbar-brand .navbar-link.is-active,\n.navbar.is-warning .navbar-brand .navbar-link:focus,\n.navbar.is-warning .navbar-brand .navbar-link:hover,\n.navbar.is-warning .navbar-brand > a.navbar-item.is-active,\n.navbar.is-warning .navbar-brand > a.navbar-item:focus,\n.navbar.is-warning .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #ffd83d;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.navbar.is-warning .navbar-brand .navbar-link:after {\n\tborder-color: rgba(0, 0, 0, 0.7);\n}\n.navbar.is-warning .navbar-burger {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-warning .navbar-end .navbar-link,\n\t.navbar.is-warning .navbar-end > .navbar-item,\n\t.navbar.is-warning .navbar-start .navbar-link,\n\t.navbar.is-warning .navbar-start > .navbar-item {\n\t\tcolor: rgba(0, 0, 0, 0.7);\n\t}\n\t.navbar.is-warning .navbar-end .navbar-link.is-active,\n\t.navbar.is-warning .navbar-end .navbar-link:focus,\n\t.navbar.is-warning .navbar-end .navbar-link:hover,\n\t.navbar.is-warning .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-warning .navbar-end > a.navbar-item:focus,\n\t.navbar.is-warning .navbar-end > a.navbar-item:hover,\n\t.navbar.is-warning .navbar-start .navbar-link.is-active,\n\t.navbar.is-warning .navbar-start .navbar-link:focus,\n\t.navbar.is-warning .navbar-start .navbar-link:hover,\n\t.navbar.is-warning .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-warning .navbar-start > a.navbar-item:focus,\n\t.navbar.is-warning .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #ffd83d;\n\t\tcolor: rgba(0, 0, 0, 0.7);\n\t}\n\t.navbar.is-warning .navbar-end .navbar-link:after,\n\t.navbar.is-warning .navbar-start .navbar-link:after {\n\t\tborder-color: rgba(0, 0, 0, 0.7);\n\t}\n\t.navbar.is-warning .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-warning .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-warning .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #ffd83d;\n\t\tcolor: rgba(0, 0, 0, 0.7);\n\t}\n\t.navbar.is-warning .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #ffdd57;\n\t\tcolor: rgba(0, 0, 0, 0.7);\n\t}\n}\n.navbar.is-danger {\n\tbackground-color: #f14668;\n\tcolor: #fff;\n}\n.navbar.is-danger .navbar-brand .navbar-link,\n.navbar.is-danger .navbar-brand > .navbar-item {\n\tcolor: #fff;\n}\n.navbar.is-danger .navbar-brand .navbar-link.is-active,\n.navbar.is-danger .navbar-brand .navbar-link:focus,\n.navbar.is-danger .navbar-brand .navbar-link:hover,\n.navbar.is-danger .navbar-brand > a.navbar-item.is-active,\n.navbar.is-danger .navbar-brand > a.navbar-item:focus,\n.navbar.is-danger .navbar-brand > a.navbar-item:hover {\n\tbackground-color: #ef2e55;\n\tcolor: #fff;\n}\n.navbar.is-danger .navbar-brand .navbar-link:after {\n\tborder-color: #fff;\n}\n.navbar.is-danger .navbar-burger {\n\tcolor: #fff;\n}\n@media screen and (min-width: 1024px) {\n\t.navbar.is-danger .navbar-end .navbar-link,\n\t.navbar.is-danger .navbar-end > .navbar-item,\n\t.navbar.is-danger .navbar-start .navbar-link,\n\t.navbar.is-danger .navbar-start > .navbar-item {\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-danger .navbar-end .navbar-link.is-active,\n\t.navbar.is-danger .navbar-end .navbar-link:focus,\n\t.navbar.is-danger .navbar-end .navbar-link:hover,\n\t.navbar.is-danger .navbar-end > a.navbar-item.is-active,\n\t.navbar.is-danger .navbar-end > a.navbar-item:focus,\n\t.navbar.is-danger .navbar-end > a.navbar-item:hover,\n\t.navbar.is-danger .navbar-start .navbar-link.is-active,\n\t.navbar.is-danger .navbar-start .navbar-link:focus,\n\t.navbar.is-danger .navbar-start .navbar-link:hover,\n\t.navbar.is-danger .navbar-start > a.navbar-item.is-active,\n\t.navbar.is-danger .navbar-start > a.navbar-item:focus,\n\t.navbar.is-danger .navbar-start > a.navbar-item:hover {\n\t\tbackground-color: #ef2e55;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-danger .navbar-end .navbar-link:after,\n\t.navbar.is-danger .navbar-start .navbar-link:after {\n\t\tborder-color: #fff;\n\t}\n\t.navbar.is-danger .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-danger .navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar.is-danger .navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #ef2e55;\n\t\tcolor: #fff;\n\t}\n\t.navbar.is-danger .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #f14668;\n\t\tcolor: #fff;\n\t}\n}\n.navbar > .container {\n\talign-items: stretch;\n\tdisplay: flex;\n\tmin-height: 3.25rem;\n\twidth: 100%;\n}\n.navbar.has-shadow {\n\tbox-shadow: 0 2px 0 0 #f5f5f5;\n}\n.navbar.is-fixed-bottom,\n.navbar.is-fixed-top {\n\tleft: 0;\n\tposition: fixed;\n\tright: 0;\n\tz-index: 30;\n}\n.navbar.is-fixed-bottom {\n\tbottom: 0;\n}\n.navbar.is-fixed-bottom.has-shadow {\n\tbox-shadow: 0 -2px 0 0 #f5f5f5;\n}\n.navbar.is-fixed-top {\n\ttop: 0;\n}\nbody.has-navbar-fixed-top,\nhtml.has-navbar-fixed-top {\n\tpadding-top: 3.25rem;\n}\nbody.has-navbar-fixed-bottom,\nhtml.has-navbar-fixed-bottom {\n\tpadding-bottom: 3.25rem;\n}\n.navbar-brand,\n.navbar-tabs {\n\talign-items: stretch;\n\tdisplay: flex;\n\tflex-shrink: 0;\n\tmin-height: 3.25rem;\n}\n.navbar-brand a.navbar-item:focus,\n.navbar-brand a.navbar-item:hover {\n\tbackground-color: transparent;\n}\n.navbar-tabs {\n\t-webkit-overflow-scrolling: touch;\n\tmax-width: 100vw;\n\toverflow-x: auto;\n\toverflow-y: hidden;\n}\n.navbar-burger {\n\tcolor: #4a4a4a;\n\tcursor: pointer;\n\tdisplay: block;\n\theight: 3.25rem;\n\tposition: relative;\n\twidth: 3.25rem;\n\tmargin-left: auto;\n}\n.navbar-burger span {\n\tbackground-color: currentColor;\n\tdisplay: block;\n\theight: 1px;\n\tleft: calc(50% - 8px);\n\tposition: absolute;\n\ttransform-origin: center;\n\ttransition-duration: 86ms;\n\ttransition-property: background-color, opacity, transform;\n\ttransition-timing-function: ease-out;\n\twidth: 16px;\n}\n.navbar-burger span:first-child {\n\ttop: calc(50% - 6px);\n}\n.navbar-burger span:nth-child(2) {\n\ttop: calc(50% - 1px);\n}\n.navbar-burger span:nth-child(3) {\n\ttop: calc(50% + 4px);\n}\n.navbar-burger:hover {\n\tbackground-color: rgba(0, 0, 0, 0.05);\n}\n.navbar-burger.is-active span:first-child {\n\ttransform: translateY(5px) rotate(45deg);\n}\n.navbar-burger.is-active span:nth-child(2) {\n\topacity: 0;\n}\n.navbar-burger.is-active span:nth-child(3) {\n\ttransform: translateY(-5px) rotate(-45deg);\n}\n.navbar-menu {\n\tdisplay: none;\n}\n.navbar-item,\n.navbar-link {\n\tcolor: #4a4a4a;\n\tdisplay: block;\n\tline-height: 1.5;\n\tpadding: 0.5rem 0.75rem;\n\tposition: relative;\n}\n.navbar-item .icon:only-child,\n.navbar-link .icon:only-child {\n\tmargin-left: -0.25rem;\n\tmargin-right: -0.25rem;\n}\n.navbar-link,\na.navbar-item {\n\tcursor: pointer;\n}\n.navbar-link.is-active,\n.navbar-link:focus,\n.navbar-link:focus-within,\n.navbar-link:hover,\na.navbar-item.is-active,\na.navbar-item:focus,\na.navbar-item:focus-within,\na.navbar-item:hover {\n\tbackground-color: #fafafa;\n\tcolor: #00d1b2;\n}\n.navbar-item {\n\tflex-grow: 0;\n\tflex-shrink: 0;\n}\n.navbar-item img {\n\tmax-height: 1.75rem;\n}\n.navbar-item.has-dropdown {\n\tpadding: 0;\n}\n.navbar-item.is-expanded {\n\tflex-grow: 1;\n\tflex-shrink: 1;\n}\n.navbar-item.is-tab {\n\tborder-bottom: 1px solid transparent;\n\tmin-height: 3.25rem;\n\tpadding-bottom: calc(0.5rem - 1px);\n}\n.navbar-item.is-tab:focus,\n.navbar-item.is-tab:hover {\n\tbackground-color: transparent;\n\tborder-bottom-color: #00d1b2;\n}\n.navbar-item.is-tab.is-active {\n\tbackground-color: transparent;\n\tborder-bottom: 3px solid #00d1b2;\n\tcolor: #00d1b2;\n\tpadding-bottom: calc(0.5rem - 3px);\n}\n.navbar-content {\n\tflex-grow: 1;\n\tflex-shrink: 1;\n}\n.navbar-link:not(.is-arrowless) {\n\tpadding-right: 2.5em;\n}\n.navbar-link:not(.is-arrowless):after {\n\tborder-color: #00d1b2;\n\tmargin-top: -0.375em;\n\tright: 1.125em;\n}\n.navbar-dropdown {\n\tfont-size: 0.875rem;\n\tpadding-bottom: 0.5rem;\n\tpadding-top: 0.5rem;\n}\n.navbar-dropdown .navbar-item {\n\tpadding-left: 1.5rem;\n\tpadding-right: 1.5rem;\n}\n.navbar-divider {\n\tbackground-color: #f5f5f5;\n\tborder: none;\n\tdisplay: none;\n\theight: 2px;\n\tmargin: 0.5rem 0;\n}\n@media screen and (max-width: 1023px) {\n\t.navbar > .container {\n\t\tdisplay: block;\n\t}\n\t.navbar-brand .navbar-item,\n\t.navbar-tabs .navbar-item {\n\t\talign-items: center;\n\t\tdisplay: flex;\n\t}\n\t.navbar-link:after {\n\t\tdisplay: none;\n\t}\n\t.navbar-menu {\n\t\tbackground-color: #fff;\n\t\tbox-shadow: 0 8px 16px rgba(10, 10, 10, 0.1);\n\t\tpadding: 0.5rem 0;\n\t}\n\t.navbar-menu.is-active {\n\t\tdisplay: block;\n\t}\n\t.navbar.is-fixed-bottom-touch,\n\t.navbar.is-fixed-top-touch {\n\t\tleft: 0;\n\t\tposition: fixed;\n\t\tright: 0;\n\t\tz-index: 30;\n\t}\n\t.navbar.is-fixed-bottom-touch {\n\t\tbottom: 0;\n\t}\n\t.navbar.is-fixed-bottom-touch.has-shadow {\n\t\tbox-shadow: 0 -2px 3px rgba(10, 10, 10, 0.1);\n\t}\n\t.navbar.is-fixed-top-touch {\n\t\ttop: 0;\n\t}\n\t.navbar.is-fixed-top-touch .navbar-menu,\n\t.navbar.is-fixed-top .navbar-menu {\n\t\t-webkit-overflow-scrolling: touch;\n\t\tmax-height: calc(100vh - 3.25rem);\n\t\toverflow: auto;\n\t}\n\tbody.has-navbar-fixed-top-touch,\n\thtml.has-navbar-fixed-top-touch {\n\t\tpadding-top: 3.25rem;\n\t}\n\tbody.has-navbar-fixed-bottom-touch,\n\thtml.has-navbar-fixed-bottom-touch {\n\t\tpadding-bottom: 3.25rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.navbar,\n\t.navbar-end,\n\t.navbar-menu,\n\t.navbar-start {\n\t\talign-items: stretch;\n\t\tdisplay: flex;\n\t}\n\t.navbar {\n\t\tmin-height: 3.25rem;\n\t}\n\t.navbar.is-spaced {\n\t\tpadding: 1rem 2rem;\n\t}\n\t.navbar.is-spaced .navbar-end,\n\t.navbar.is-spaced .navbar-start {\n\t\talign-items: center;\n\t}\n\t.navbar.is-spaced .navbar-link,\n\t.navbar.is-spaced a.navbar-item {\n\t\tborder-radius: 4px;\n\t}\n\t.navbar.is-transparent .navbar-link.is-active,\n\t.navbar.is-transparent .navbar-link:focus,\n\t.navbar.is-transparent .navbar-link:hover,\n\t.navbar.is-transparent a.navbar-item.is-active,\n\t.navbar.is-transparent a.navbar-item:focus,\n\t.navbar.is-transparent a.navbar-item:hover {\n\t\tbackground-color: transparent !important;\n\t}\n\t.navbar.is-transparent .navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar.is-transparent\n\t\t.navbar-item.has-dropdown.is-hoverable:focus-within\n\t\t.navbar-link,\n\t.navbar.is-transparent\n\t\t.navbar-item.has-dropdown.is-hoverable:focus\n\t\t.navbar-link,\n\t.navbar.is-transparent\n\t\t.navbar-item.has-dropdown.is-hoverable:hover\n\t\t.navbar-link {\n\t\tbackground-color: transparent !important;\n\t}\n\t.navbar.is-transparent .navbar-dropdown a.navbar-item:focus,\n\t.navbar.is-transparent .navbar-dropdown a.navbar-item:hover {\n\t\tbackground-color: #f5f5f5;\n\t\tcolor: #0a0a0a;\n\t}\n\t.navbar.is-transparent .navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #f5f5f5;\n\t\tcolor: #00d1b2;\n\t}\n\t.navbar-burger {\n\t\tdisplay: none;\n\t}\n\t.navbar-item,\n\t.navbar-link {\n\t\talign-items: center;\n\t\tdisplay: flex;\n\t}\n\t.navbar-item.has-dropdown {\n\t\talign-items: stretch;\n\t}\n\t.navbar-item.has-dropdown-up .navbar-link:after {\n\t\ttransform: rotate(135deg) translate(0.25em, -0.25em);\n\t}\n\t.navbar-item.has-dropdown-up .navbar-dropdown {\n\t\tborder-bottom: 2px solid #dbdbdb;\n\t\tborder-radius: 6px 6px 0 0;\n\t\tborder-top: none;\n\t\tbottom: 100%;\n\t\tbox-shadow: 0 -8px 8px rgba(10, 10, 10, 0.1);\n\t\ttop: auto;\n\t}\n\t.navbar-item.is-active .navbar-dropdown,\n\t.navbar-item.is-hoverable:focus-within .navbar-dropdown,\n\t.navbar-item.is-hoverable:focus .navbar-dropdown,\n\t.navbar-item.is-hoverable:hover .navbar-dropdown {\n\t\tdisplay: block;\n\t}\n\t.navbar-item.is-active .navbar-dropdown.is-boxed,\n\t.navbar-item.is-hoverable:focus-within .navbar-dropdown.is-boxed,\n\t.navbar-item.is-hoverable:focus .navbar-dropdown.is-boxed,\n\t.navbar-item.is-hoverable:hover .navbar-dropdown.is-boxed,\n\t.navbar.is-spaced .navbar-item.is-active .navbar-dropdown,\n\t.navbar.is-spaced .navbar-item.is-hoverable:focus-within .navbar-dropdown,\n\t.navbar.is-spaced .navbar-item.is-hoverable:focus .navbar-dropdown,\n\t.navbar.is-spaced .navbar-item.is-hoverable:hover .navbar-dropdown {\n\t\topacity: 1;\n\t\tpointer-events: auto;\n\t\ttransform: translateY(0);\n\t}\n\t.navbar-menu {\n\t\tflex-grow: 1;\n\t\tflex-shrink: 0;\n\t}\n\t.navbar-start {\n\t\tjustify-content: flex-start;\n\t\tmargin-right: auto;\n\t}\n\t.navbar-end {\n\t\tjustify-content: flex-end;\n\t\tmargin-left: auto;\n\t}\n\t.navbar-dropdown {\n\t\tbackground-color: #fff;\n\t\tborder-bottom-left-radius: 6px;\n\t\tborder-bottom-right-radius: 6px;\n\t\tborder-top: 2px solid #dbdbdb;\n\t\tbox-shadow: 0 8px 8px rgba(10, 10, 10, 0.1);\n\t\tdisplay: none;\n\t\tfont-size: 0.875rem;\n\t\tleft: 0;\n\t\tmin-width: 100%;\n\t\tposition: absolute;\n\t\ttop: 100%;\n\t\tz-index: 20;\n\t}\n\t.navbar-dropdown .navbar-item {\n\t\tpadding: 0.375rem 1rem;\n\t\twhite-space: nowrap;\n\t}\n\t.navbar-dropdown a.navbar-item {\n\t\tpadding-right: 3rem;\n\t}\n\t.navbar-dropdown a.navbar-item:focus,\n\t.navbar-dropdown a.navbar-item:hover {\n\t\tbackground-color: #f5f5f5;\n\t\tcolor: #0a0a0a;\n\t}\n\t.navbar-dropdown a.navbar-item.is-active {\n\t\tbackground-color: #f5f5f5;\n\t\tcolor: #00d1b2;\n\t}\n\t.navbar-dropdown.is-boxed,\n\t.navbar.is-spaced .navbar-dropdown {\n\t\tborder-radius: 6px;\n\t\tborder-top: none;\n\t\tbox-shadow: 0 8px 8px rgba(10, 10, 10, 0.1), 0 0 0 1px rgba(10, 10, 10, 0.1);\n\t\tdisplay: block;\n\t\topacity: 0;\n\t\tpointer-events: none;\n\t\ttop: calc(100% + -4px);\n\t\ttransform: translateY(-5px);\n\t\ttransition-duration: 86ms;\n\t\ttransition-property: opacity, transform;\n\t}\n\t.navbar-dropdown.is-right {\n\t\tleft: auto;\n\t\tright: 0;\n\t}\n\t.navbar-divider {\n\t\tdisplay: block;\n\t}\n\t.container > .navbar .navbar-brand,\n\t.navbar > .container .navbar-brand {\n\t\tmargin-left: -0.75rem;\n\t}\n\t.container > .navbar .navbar-menu,\n\t.navbar > .container .navbar-menu {\n\t\tmargin-right: -0.75rem;\n\t}\n\t.navbar.is-fixed-bottom-desktop,\n\t.navbar.is-fixed-top-desktop {\n\t\tleft: 0;\n\t\tposition: fixed;\n\t\tright: 0;\n\t\tz-index: 30;\n\t}\n\t.navbar.is-fixed-bottom-desktop {\n\t\tbottom: 0;\n\t}\n\t.navbar.is-fixed-bottom-desktop.has-shadow {\n\t\tbox-shadow: 0 -2px 3px rgba(10, 10, 10, 0.1);\n\t}\n\t.navbar.is-fixed-top-desktop {\n\t\ttop: 0;\n\t}\n\tbody.has-navbar-fixed-top-desktop,\n\thtml.has-navbar-fixed-top-desktop {\n\t\tpadding-top: 3.25rem;\n\t}\n\tbody.has-navbar-fixed-bottom-desktop,\n\thtml.has-navbar-fixed-bottom-desktop {\n\t\tpadding-bottom: 3.25rem;\n\t}\n\tbody.has-spaced-navbar-fixed-top,\n\thtml.has-spaced-navbar-fixed-top {\n\t\tpadding-top: 5.25rem;\n\t}\n\tbody.has-spaced-navbar-fixed-bottom,\n\thtml.has-spaced-navbar-fixed-bottom {\n\t\tpadding-bottom: 5.25rem;\n\t}\n\t.navbar-link.is-active,\n\ta.navbar-item.is-active {\n\t\tcolor: #0a0a0a;\n\t}\n\t.navbar-link.is-active:not(:focus):not(:hover),\n\ta.navbar-item.is-active:not(:focus):not(:hover) {\n\t\tbackground-color: transparent;\n\t}\n\t.navbar-item.has-dropdown.is-active .navbar-link,\n\t.navbar-item.has-dropdown:focus .navbar-link,\n\t.navbar-item.has-dropdown:hover .navbar-link {\n\t\tbackground-color: #fafafa;\n\t}\n}\n.hero.is-fullheight-with-navbar {\n\tmin-height: calc(100vh - 3.25rem);\n}\n.pagination {\n\tfont-size: 1rem;\n\tmargin: -0.25rem;\n}\n.pagination.is-small {\n\tfont-size: 0.75rem;\n}\n.pagination.is-medium {\n\tfont-size: 1.25rem;\n}\n.pagination.is-large {\n\tfont-size: 1.5rem;\n}\n.pagination.is-rounded .pagination-next,\n.pagination.is-rounded .pagination-previous {\n\tpadding-left: 1em;\n\tpadding-right: 1em;\n\tborder-radius: 290486px;\n}\n.pagination.is-rounded .pagination-link {\n\tborder-radius: 290486px;\n}\n.pagination,\n.pagination-list {\n\talign-items: center;\n\tdisplay: flex;\n\tjustify-content: center;\n\ttext-align: center;\n}\n.pagination-ellipsis,\n.pagination-link,\n.pagination-next,\n.pagination-previous {\n\tfont-size: 1em;\n\tjustify-content: center;\n\tmargin: 0.25rem;\n\tpadding-left: 0.5em;\n\tpadding-right: 0.5em;\n\ttext-align: center;\n}\n.pagination-link,\n.pagination-next,\n.pagination-previous {\n\tborder-color: #dbdbdb;\n\tcolor: #363636;\n\tmin-width: 2.5em;\n}\n.pagination-link:hover,\n.pagination-next:hover,\n.pagination-previous:hover {\n\tborder-color: #b5b5b5;\n\tcolor: #363636;\n}\n.pagination-link:focus,\n.pagination-next:focus,\n.pagination-previous:focus {\n\tborder-color: #3273dc;\n}\n.pagination-link:active,\n.pagination-next:active,\n.pagination-previous:active {\n\tbox-shadow: inset 0 1px 2px rgba(10, 10, 10, 0.2);\n}\n.pagination-link[disabled],\n.pagination-next[disabled],\n.pagination-previous[disabled] {\n\tbackground-color: #dbdbdb;\n\tborder-color: #dbdbdb;\n\tbox-shadow: none;\n\tcolor: #7a7a7a;\n\topacity: 0.5;\n}\n.pagination-next,\n.pagination-previous {\n\tpadding-left: 0.75em;\n\tpadding-right: 0.75em;\n\twhite-space: nowrap;\n}\n.pagination-link.is-current {\n\tbackground-color: #00d1b2;\n\tborder-color: #00d1b2;\n\tcolor: #fff;\n}\n.pagination-ellipsis {\n\tcolor: #b5b5b5;\n\tpointer-events: none;\n}\n.pagination-list {\n\tflex-wrap: wrap;\n}\n@media screen and (max-width: 768px) {\n\t.pagination {\n\t\tflex-wrap: wrap;\n\t}\n\t.pagination-list li,\n\t.pagination-next,\n\t.pagination-previous {\n\t\tflex-grow: 1;\n\t\tflex-shrink: 1;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.pagination-list {\n\t\tflex-grow: 1;\n\t\tflex-shrink: 1;\n\t\tjustify-content: flex-start;\n\t\torder: 1;\n\t}\n\t.pagination-previous {\n\t\torder: 2;\n\t}\n\t.pagination-next {\n\t\torder: 3;\n\t}\n\t.pagination {\n\t\tjustify-content: space-between;\n\t}\n\t.pagination.is-centered .pagination-previous {\n\t\torder: 1;\n\t}\n\t.pagination.is-centered .pagination-list {\n\t\tjustify-content: center;\n\t\torder: 2;\n\t}\n\t.pagination.is-centered .pagination-next {\n\t\torder: 3;\n\t}\n\t.pagination.is-right .pagination-previous {\n\t\torder: 1;\n\t}\n\t.pagination.is-right .pagination-next {\n\t\torder: 2;\n\t}\n\t.pagination.is-right .pagination-list {\n\t\tjustify-content: flex-end;\n\t\torder: 3;\n\t}\n}\n.panel {\n\tborder-radius: 6px;\n\tbox-shadow: 0 0.5em 1em -0.125em rgba(10, 10, 10, 0.1),\n\t\t0 0 0 1px rgba(10, 10, 10, 0.02);\n\tfont-size: 1rem;\n}\n.panel:not(:last-child) {\n\tmargin-bottom: 1.5rem;\n}\n.panel.is-white .panel-heading {\n\tbackground-color: #fff;\n\tcolor: #0a0a0a;\n}\n.panel.is-white .panel-tabs a.is-active {\n\tborder-bottom-color: #fff;\n}\n.panel.is-white .panel-block.is-active .panel-icon {\n\tcolor: #fff;\n}\n.panel.is-black .panel-heading {\n\tbackground-color: #0a0a0a;\n\tcolor: #fff;\n}\n.panel.is-black .panel-tabs a.is-active {\n\tborder-bottom-color: #0a0a0a;\n}\n.panel.is-black .panel-block.is-active .panel-icon {\n\tcolor: #0a0a0a;\n}\n.panel.is-light .panel-heading {\n\tbackground-color: #f5f5f5;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.panel.is-light .panel-tabs a.is-active {\n\tborder-bottom-color: #f5f5f5;\n}\n.panel.is-light .panel-block.is-active .panel-icon {\n\tcolor: #f5f5f5;\n}\n.panel.is-dark .panel-heading {\n\tbackground-color: #363636;\n\tcolor: #fff;\n}\n.panel.is-dark .panel-tabs a.is-active {\n\tborder-bottom-color: #363636;\n}\n.panel.is-dark .panel-block.is-active .panel-icon {\n\tcolor: #363636;\n}\n.panel.is-primary .panel-heading {\n\tbackground-color: #454545;\n\tcolor: #fff;\n}\n.panel.is-primary .panel-tabs a.is-active {\n\tborder-bottom-color: #454545;\n}\n.panel.is-primary .panel-block.is-active .panel-icon {\n\tcolor: #454545;\n}\n.panel.is-link .panel-heading {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\n.panel.is-link .panel-tabs a.is-active {\n\tborder-bottom-color: #00d1b2;\n}\n.panel.is-link .panel-block.is-active .panel-icon {\n\tcolor: #00d1b2;\n}\n.panel.is-info .panel-heading {\n\tbackground-color: #3298dc;\n\tcolor: #fff;\n}\n.panel.is-info .panel-tabs a.is-active {\n\tborder-bottom-color: #3298dc;\n}\n.panel.is-info .panel-block.is-active .panel-icon {\n\tcolor: #3298dc;\n}\n.panel.is-success .panel-heading {\n\tbackground-color: #48c774;\n\tcolor: #fff;\n}\n.panel.is-success .panel-tabs a.is-active {\n\tborder-bottom-color: #48c774;\n}\n.panel.is-success .panel-block.is-active .panel-icon {\n\tcolor: #48c774;\n}\n.panel.is-warning .panel-heading {\n\tbackground-color: #ffdd57;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.panel.is-warning .panel-tabs a.is-active {\n\tborder-bottom-color: #ffdd57;\n}\n.panel.is-warning .panel-block.is-active .panel-icon {\n\tcolor: #ffdd57;\n}\n.panel.is-danger .panel-heading {\n\tbackground-color: #f14668;\n\tcolor: #fff;\n}\n.panel.is-danger .panel-tabs a.is-active {\n\tborder-bottom-color: #f14668;\n}\n.panel.is-danger .panel-block.is-active .panel-icon {\n\tcolor: #f14668;\n}\n.panel-block:not(:last-child),\n.panel-tabs:not(:last-child) {\n\tborder-bottom: 1px solid #ededed;\n}\n.panel-heading {\n\tbackground-color: #ededed;\n\tborder-radius: 6px 6px 0 0;\n\tcolor: #363636;\n\tfont-size: 1.25em;\n\tfont-weight: 700;\n\tline-height: 1.25;\n\tpadding: 0.75em 1em;\n}\n.panel-tabs {\n\talign-items: flex-end;\n\tdisplay: flex;\n\tfont-size: 0.875em;\n\tjustify-content: center;\n}\n.panel-tabs a {\n\tborder-bottom: 1px solid #dbdbdb;\n\tmargin-bottom: -1px;\n\tpadding: 0.5em;\n}\n.panel-tabs a.is-active {\n\tborder-bottom-color: #4a4a4a;\n\tcolor: #363636;\n}\n.panel-list a {\n\tcolor: #4a4a4a;\n}\n.panel-list a:hover {\n\tcolor: #00d1b2;\n}\n.panel-block {\n\talign-items: center;\n\tcolor: #363636;\n\tdisplay: flex;\n\tjustify-content: flex-start;\n\tpadding: 0.5em 0.75em;\n}\n.panel-block input[type=\"checkbox\"] {\n\tmargin-right: 0.75em;\n}\n.panel-block > .control {\n\tflex-grow: 1;\n\tflex-shrink: 1;\n\twidth: 100%;\n}\n.panel-block.is-wrapped {\n\tflex-wrap: wrap;\n}\n.panel-block.is-active {\n\tborder-left-color: #00d1b2;\n\tcolor: #363636;\n}\n.panel-block.is-active .panel-icon {\n\tcolor: #00d1b2;\n}\n.panel-block:last-child {\n\tborder-bottom-left-radius: 6px;\n\tborder-bottom-right-radius: 6px;\n}\na.panel-block,\nlabel.panel-block {\n\tcursor: pointer;\n}\na.panel-block:hover,\nlabel.panel-block:hover {\n\tbackground-color: #f5f5f5;\n}\n.panel-icon {\n\tdisplay: inline-block;\n\tfont-size: 14px;\n\theight: 1em;\n\tline-height: 1em;\n\ttext-align: center;\n\tvertical-align: top;\n\twidth: 1em;\n\tcolor: #7a7a7a;\n\tmargin-right: 0.75em;\n}\n.panel-icon .fa {\n\tfont-size: inherit;\n\tline-height: inherit;\n}\n.tabs {\n\t-webkit-overflow-scrolling: touch;\n\talign-items: stretch;\n\tdisplay: flex;\n\tfont-size: 1rem;\n\tjustify-content: space-between;\n\toverflow: hidden;\n\toverflow-x: auto;\n\twhite-space: nowrap;\n}\n.tabs a {\n\talign-items: center;\n\tborder-bottom: 1px solid #dbdbdb;\n\tcolor: #4a4a4a;\n\tdisplay: flex;\n\tjustify-content: center;\n\tmargin-bottom: -1px;\n\tpadding: 0.5em 1em;\n\tvertical-align: top;\n}\n.tabs a:hover {\n\tborder-bottom-color: #363636;\n\tcolor: #363636;\n}\n.tabs li {\n\tdisplay: block;\n}\n.tabs li.is-active a {\n\tborder-bottom-color: #00d1b2;\n\tcolor: #00d1b2;\n}\n.tabs ul {\n\talign-items: center;\n\tborder-bottom: 1px solid #dbdbdb;\n\tdisplay: flex;\n\tflex-grow: 1;\n\tflex-shrink: 0;\n\tjustify-content: flex-start;\n}\n.tabs ul.is-center,\n.tabs ul.is-left {\n\tpadding-right: 0.75em;\n}\n.tabs ul.is-center {\n\tflex: none;\n\tjustify-content: center;\n\tpadding-left: 0.75em;\n}\n.tabs ul.is-right {\n\tjustify-content: flex-end;\n\tpadding-left: 0.75em;\n}\n.tabs .icon:first-child {\n\tmargin-right: 0.5em;\n}\n.tabs .icon:last-child {\n\tmargin-left: 0.5em;\n}\n.tabs.is-centered ul {\n\tjustify-content: center;\n}\n.tabs.is-right ul {\n\tjustify-content: flex-end;\n}\n.tabs.is-boxed a {\n\tborder: 1px solid transparent;\n\tborder-radius: 4px 4px 0 0;\n}\n.tabs.is-boxed a:hover {\n\tbackground-color: #f5f5f5;\n\tborder-bottom-color: #dbdbdb;\n}\n.tabs.is-boxed li.is-active a {\n\tbackground-color: #fff;\n\tborder-color: #dbdbdb;\n\tborder-bottom-color: transparent !important;\n}\n.tabs.is-fullwidth li {\n\tflex-grow: 1;\n\tflex-shrink: 0;\n}\n.tabs.is-toggle a {\n\tborder: 1px solid #dbdbdb;\n\tmargin-bottom: 0;\n\tposition: relative;\n}\n.tabs.is-toggle a:hover {\n\tbackground-color: #f5f5f5;\n\tborder-color: #b5b5b5;\n\tz-index: 2;\n}\n.tabs.is-toggle li + li {\n\tmargin-left: -1px;\n}\n.tabs.is-toggle li:first-child a {\n\tborder-radius: 4px 0 0 4px;\n}\n.tabs.is-toggle li:last-child a {\n\tborder-radius: 0 4px 4px 0;\n}\n.tabs.is-toggle li.is-active a {\n\tbackground-color: #00d1b2;\n\tborder-color: #00d1b2;\n\tcolor: #fff;\n\tz-index: 1;\n}\n.tabs.is-toggle ul {\n\tborder-bottom: none;\n}\n.tabs.is-toggle.is-toggle-rounded li:first-child a {\n\tborder-bottom-left-radius: 290486px;\n\tborder-top-left-radius: 290486px;\n\tpadding-left: 1.25em;\n}\n.tabs.is-toggle.is-toggle-rounded li:last-child a {\n\tborder-bottom-right-radius: 290486px;\n\tborder-top-right-radius: 290486px;\n\tpadding-right: 1.25em;\n}\n.tabs.is-small {\n\tfont-size: 0.75rem;\n}\n.tabs.is-medium {\n\tfont-size: 1.25rem;\n}\n.tabs.is-large {\n\tfont-size: 1.5rem;\n}\n.column {\n\tdisplay: block;\n\tflex-basis: 0;\n\tflex-grow: 1;\n\tflex-shrink: 1;\n\tpadding: 0.75rem;\n}\n.columns.is-mobile > .column.is-narrow {\n\tflex: none;\n}\n.columns.is-mobile > .column.is-full {\n\tflex: none;\n\twidth: 100%;\n}\n.columns.is-mobile > .column.is-three-quarters {\n\tflex: none;\n\twidth: 75%;\n}\n.columns.is-mobile > .column.is-two-thirds {\n\tflex: none;\n\twidth: 66.6666%;\n}\n.columns.is-mobile > .column.is-half {\n\tflex: none;\n\twidth: 50%;\n}\n.columns.is-mobile > .column.is-one-third {\n\tflex: none;\n\twidth: 33.3333%;\n}\n.columns.is-mobile > .column.is-one-quarter {\n\tflex: none;\n\twidth: 25%;\n}\n.columns.is-mobile > .column.is-one-fifth {\n\tflex: none;\n\twidth: 20%;\n}\n.columns.is-mobile > .column.is-two-fifths {\n\tflex: none;\n\twidth: 40%;\n}\n.columns.is-mobile > .column.is-three-fifths {\n\tflex: none;\n\twidth: 60%;\n}\n.columns.is-mobile > .column.is-four-fifths {\n\tflex: none;\n\twidth: 80%;\n}\n.columns.is-mobile > .column.is-offset-three-quarters {\n\tmargin-left: 75%;\n}\n.columns.is-mobile > .column.is-offset-two-thirds {\n\tmargin-left: 66.6666%;\n}\n.columns.is-mobile > .column.is-offset-half {\n\tmargin-left: 50%;\n}\n.columns.is-mobile > .column.is-offset-one-third {\n\tmargin-left: 33.3333%;\n}\n.columns.is-mobile > .column.is-offset-one-quarter {\n\tmargin-left: 25%;\n}\n.columns.is-mobile > .column.is-offset-one-fifth {\n\tmargin-left: 20%;\n}\n.columns.is-mobile > .column.is-offset-two-fifths {\n\tmargin-left: 40%;\n}\n.columns.is-mobile > .column.is-offset-three-fifths {\n\tmargin-left: 60%;\n}\n.columns.is-mobile > .column.is-offset-four-fifths {\n\tmargin-left: 80%;\n}\n.columns.is-mobile > .column.is-0 {\n\tflex: none;\n\twidth: 0;\n}\n.columns.is-mobile > .column.is-offset-0 {\n\tmargin-left: 0;\n}\n.columns.is-mobile > .column.is-1 {\n\tflex: none;\n\twidth: 8.33333%;\n}\n.columns.is-mobile > .column.is-offset-1 {\n\tmargin-left: 8.33333%;\n}\n.columns.is-mobile > .column.is-2 {\n\tflex: none;\n\twidth: 16.66667%;\n}\n.columns.is-mobile > .column.is-offset-2 {\n\tmargin-left: 16.66667%;\n}\n.columns.is-mobile > .column.is-3 {\n\tflex: none;\n\twidth: 25%;\n}\n.columns.is-mobile > .column.is-offset-3 {\n\tmargin-left: 25%;\n}\n.columns.is-mobile > .column.is-4 {\n\tflex: none;\n\twidth: 33.33333%;\n}\n.columns.is-mobile > .column.is-offset-4 {\n\tmargin-left: 33.33333%;\n}\n.columns.is-mobile > .column.is-5 {\n\tflex: none;\n\twidth: 41.66667%;\n}\n.columns.is-mobile > .column.is-offset-5 {\n\tmargin-left: 41.66667%;\n}\n.columns.is-mobile > .column.is-6 {\n\tflex: none;\n\twidth: 50%;\n}\n.columns.is-mobile > .column.is-offset-6 {\n\tmargin-left: 50%;\n}\n.columns.is-mobile > .column.is-7 {\n\tflex: none;\n\twidth: 58.33333%;\n}\n.columns.is-mobile > .column.is-offset-7 {\n\tmargin-left: 58.33333%;\n}\n.columns.is-mobile > .column.is-8 {\n\tflex: none;\n\twidth: 66.66667%;\n}\n.columns.is-mobile > .column.is-offset-8 {\n\tmargin-left: 66.66667%;\n}\n.columns.is-mobile > .column.is-9 {\n\tflex: none;\n\twidth: 75%;\n}\n.columns.is-mobile > .column.is-offset-9 {\n\tmargin-left: 75%;\n}\n.columns.is-mobile > .column.is-10 {\n\tflex: none;\n\twidth: 83.33333%;\n}\n.columns.is-mobile > .column.is-offset-10 {\n\tmargin-left: 83.33333%;\n}\n.columns.is-mobile > .column.is-11 {\n\tflex: none;\n\twidth: 91.66667%;\n}\n.columns.is-mobile > .column.is-offset-11 {\n\tmargin-left: 91.66667%;\n}\n.columns.is-mobile > .column.is-12 {\n\tflex: none;\n\twidth: 100%;\n}\n.columns.is-mobile > .column.is-offset-12 {\n\tmargin-left: 100%;\n}\n@media screen and (max-width: 768px) {\n\t.column.is-narrow-mobile {\n\t\tflex: none;\n\t}\n\t.column.is-full-mobile {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n\t.column.is-three-quarters-mobile {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.column.is-two-thirds-mobile {\n\t\tflex: none;\n\t\twidth: 66.6666%;\n\t}\n\t.column.is-half-mobile {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.column.is-one-third-mobile {\n\t\tflex: none;\n\t\twidth: 33.3333%;\n\t}\n\t.column.is-one-quarter-mobile {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.column.is-one-fifth-mobile {\n\t\tflex: none;\n\t\twidth: 20%;\n\t}\n\t.column.is-two-fifths-mobile {\n\t\tflex: none;\n\t\twidth: 40%;\n\t}\n\t.column.is-three-fifths-mobile {\n\t\tflex: none;\n\t\twidth: 60%;\n\t}\n\t.column.is-four-fifths-mobile {\n\t\tflex: none;\n\t\twidth: 80%;\n\t}\n\t.column.is-offset-three-quarters-mobile {\n\t\tmargin-left: 75%;\n\t}\n\t.column.is-offset-two-thirds-mobile {\n\t\tmargin-left: 66.6666%;\n\t}\n\t.column.is-offset-half-mobile {\n\t\tmargin-left: 50%;\n\t}\n\t.column.is-offset-one-third-mobile {\n\t\tmargin-left: 33.3333%;\n\t}\n\t.column.is-offset-one-quarter-mobile {\n\t\tmargin-left: 25%;\n\t}\n\t.column.is-offset-one-fifth-mobile {\n\t\tmargin-left: 20%;\n\t}\n\t.column.is-offset-two-fifths-mobile {\n\t\tmargin-left: 40%;\n\t}\n\t.column.is-offset-three-fifths-mobile {\n\t\tmargin-left: 60%;\n\t}\n\t.column.is-offset-four-fifths-mobile {\n\t\tmargin-left: 80%;\n\t}\n\t.column.is-0-mobile {\n\t\tflex: none;\n\t\twidth: 0;\n\t}\n\t.column.is-offset-0-mobile {\n\t\tmargin-left: 0;\n\t}\n\t.column.is-1-mobile {\n\t\tflex: none;\n\t\twidth: 8.33333%;\n\t}\n\t.column.is-offset-1-mobile {\n\t\tmargin-left: 8.33333%;\n\t}\n\t.column.is-2-mobile {\n\t\tflex: none;\n\t\twidth: 16.66667%;\n\t}\n\t.column.is-offset-2-mobile {\n\t\tmargin-left: 16.66667%;\n\t}\n\t.column.is-3-mobile {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.column.is-offset-3-mobile {\n\t\tmargin-left: 25%;\n\t}\n\t.column.is-4-mobile {\n\t\tflex: none;\n\t\twidth: 33.33333%;\n\t}\n\t.column.is-offset-4-mobile {\n\t\tmargin-left: 33.33333%;\n\t}\n\t.column.is-5-mobile {\n\t\tflex: none;\n\t\twidth: 41.66667%;\n\t}\n\t.column.is-offset-5-mobile {\n\t\tmargin-left: 41.66667%;\n\t}\n\t.column.is-6-mobile {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.column.is-offset-6-mobile {\n\t\tmargin-left: 50%;\n\t}\n\t.column.is-7-mobile {\n\t\tflex: none;\n\t\twidth: 58.33333%;\n\t}\n\t.column.is-offset-7-mobile {\n\t\tmargin-left: 58.33333%;\n\t}\n\t.column.is-8-mobile {\n\t\tflex: none;\n\t\twidth: 66.66667%;\n\t}\n\t.column.is-offset-8-mobile {\n\t\tmargin-left: 66.66667%;\n\t}\n\t.column.is-9-mobile {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.column.is-offset-9-mobile {\n\t\tmargin-left: 75%;\n\t}\n\t.column.is-10-mobile {\n\t\tflex: none;\n\t\twidth: 83.33333%;\n\t}\n\t.column.is-offset-10-mobile {\n\t\tmargin-left: 83.33333%;\n\t}\n\t.column.is-11-mobile {\n\t\tflex: none;\n\t\twidth: 91.66667%;\n\t}\n\t.column.is-offset-11-mobile {\n\t\tmargin-left: 91.66667%;\n\t}\n\t.column.is-12-mobile {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n\t.column.is-offset-12-mobile {\n\t\tmargin-left: 100%;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.column.is-narrow,\n\t.column.is-narrow-tablet {\n\t\tflex: none;\n\t}\n\t.column.is-full,\n\t.column.is-full-tablet {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n\t.column.is-three-quarters,\n\t.column.is-three-quarters-tablet {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.column.is-two-thirds,\n\t.column.is-two-thirds-tablet {\n\t\tflex: none;\n\t\twidth: 66.6666%;\n\t}\n\t.column.is-half,\n\t.column.is-half-tablet {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.column.is-one-third,\n\t.column.is-one-third-tablet {\n\t\tflex: none;\n\t\twidth: 33.3333%;\n\t}\n\t.column.is-one-quarter,\n\t.column.is-one-quarter-tablet {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.column.is-one-fifth,\n\t.column.is-one-fifth-tablet {\n\t\tflex: none;\n\t\twidth: 20%;\n\t}\n\t.column.is-two-fifths,\n\t.column.is-two-fifths-tablet {\n\t\tflex: none;\n\t\twidth: 40%;\n\t}\n\t.column.is-three-fifths,\n\t.column.is-three-fifths-tablet {\n\t\tflex: none;\n\t\twidth: 60%;\n\t}\n\t.column.is-four-fifths,\n\t.column.is-four-fifths-tablet {\n\t\tflex: none;\n\t\twidth: 80%;\n\t}\n\t.column.is-offset-three-quarters,\n\t.column.is-offset-three-quarters-tablet {\n\t\tmargin-left: 75%;\n\t}\n\t.column.is-offset-two-thirds,\n\t.column.is-offset-two-thirds-tablet {\n\t\tmargin-left: 66.6666%;\n\t}\n\t.column.is-offset-half,\n\t.column.is-offset-half-tablet {\n\t\tmargin-left: 50%;\n\t}\n\t.column.is-offset-one-third,\n\t.column.is-offset-one-third-tablet {\n\t\tmargin-left: 33.3333%;\n\t}\n\t.column.is-offset-one-quarter,\n\t.column.is-offset-one-quarter-tablet {\n\t\tmargin-left: 25%;\n\t}\n\t.column.is-offset-one-fifth,\n\t.column.is-offset-one-fifth-tablet {\n\t\tmargin-left: 20%;\n\t}\n\t.column.is-offset-two-fifths,\n\t.column.is-offset-two-fifths-tablet {\n\t\tmargin-left: 40%;\n\t}\n\t.column.is-offset-three-fifths,\n\t.column.is-offset-three-fifths-tablet {\n\t\tmargin-left: 60%;\n\t}\n\t.column.is-offset-four-fifths,\n\t.column.is-offset-four-fifths-tablet {\n\t\tmargin-left: 80%;\n\t}\n\t.column.is-0,\n\t.column.is-0-tablet {\n\t\tflex: none;\n\t\twidth: 0;\n\t}\n\t.column.is-offset-0,\n\t.column.is-offset-0-tablet {\n\t\tmargin-left: 0;\n\t}\n\t.column.is-1,\n\t.column.is-1-tablet {\n\t\tflex: none;\n\t\twidth: 8.33333%;\n\t}\n\t.column.is-offset-1,\n\t.column.is-offset-1-tablet {\n\t\tmargin-left: 8.33333%;\n\t}\n\t.column.is-2,\n\t.column.is-2-tablet {\n\t\tflex: none;\n\t\twidth: 16.66667%;\n\t}\n\t.column.is-offset-2,\n\t.column.is-offset-2-tablet {\n\t\tmargin-left: 16.66667%;\n\t}\n\t.column.is-3,\n\t.column.is-3-tablet {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.column.is-offset-3,\n\t.column.is-offset-3-tablet {\n\t\tmargin-left: 25%;\n\t}\n\t.column.is-4,\n\t.column.is-4-tablet {\n\t\tflex: none;\n\t\twidth: 33.33333%;\n\t}\n\t.column.is-offset-4,\n\t.column.is-offset-4-tablet {\n\t\tmargin-left: 33.33333%;\n\t}\n\t.column.is-5,\n\t.column.is-5-tablet {\n\t\tflex: none;\n\t\twidth: 41.66667%;\n\t}\n\t.column.is-offset-5,\n\t.column.is-offset-5-tablet {\n\t\tmargin-left: 41.66667%;\n\t}\n\t.column.is-6,\n\t.column.is-6-tablet {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.column.is-offset-6,\n\t.column.is-offset-6-tablet {\n\t\tmargin-left: 50%;\n\t}\n\t.column.is-7,\n\t.column.is-7-tablet {\n\t\tflex: none;\n\t\twidth: 58.33333%;\n\t}\n\t.column.is-offset-7,\n\t.column.is-offset-7-tablet {\n\t\tmargin-left: 58.33333%;\n\t}\n\t.column.is-8,\n\t.column.is-8-tablet {\n\t\tflex: none;\n\t\twidth: 66.66667%;\n\t}\n\t.column.is-offset-8,\n\t.column.is-offset-8-tablet {\n\t\tmargin-left: 66.66667%;\n\t}\n\t.column.is-9,\n\t.column.is-9-tablet {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.column.is-offset-9,\n\t.column.is-offset-9-tablet {\n\t\tmargin-left: 75%;\n\t}\n\t.column.is-10,\n\t.column.is-10-tablet {\n\t\tflex: none;\n\t\twidth: 83.33333%;\n\t}\n\t.column.is-offset-10,\n\t.column.is-offset-10-tablet {\n\t\tmargin-left: 83.33333%;\n\t}\n\t.column.is-11,\n\t.column.is-11-tablet {\n\t\tflex: none;\n\t\twidth: 91.66667%;\n\t}\n\t.column.is-offset-11,\n\t.column.is-offset-11-tablet {\n\t\tmargin-left: 91.66667%;\n\t}\n\t.column.is-12,\n\t.column.is-12-tablet {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n\t.column.is-offset-12,\n\t.column.is-offset-12-tablet {\n\t\tmargin-left: 100%;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.column.is-narrow-touch {\n\t\tflex: none;\n\t}\n\t.column.is-full-touch {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n\t.column.is-three-quarters-touch {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.column.is-two-thirds-touch {\n\t\tflex: none;\n\t\twidth: 66.6666%;\n\t}\n\t.column.is-half-touch {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.column.is-one-third-touch {\n\t\tflex: none;\n\t\twidth: 33.3333%;\n\t}\n\t.column.is-one-quarter-touch {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.column.is-one-fifth-touch {\n\t\tflex: none;\n\t\twidth: 20%;\n\t}\n\t.column.is-two-fifths-touch {\n\t\tflex: none;\n\t\twidth: 40%;\n\t}\n\t.column.is-three-fifths-touch {\n\t\tflex: none;\n\t\twidth: 60%;\n\t}\n\t.column.is-four-fifths-touch {\n\t\tflex: none;\n\t\twidth: 80%;\n\t}\n\t.column.is-offset-three-quarters-touch {\n\t\tmargin-left: 75%;\n\t}\n\t.column.is-offset-two-thirds-touch {\n\t\tmargin-left: 66.6666%;\n\t}\n\t.column.is-offset-half-touch {\n\t\tmargin-left: 50%;\n\t}\n\t.column.is-offset-one-third-touch {\n\t\tmargin-left: 33.3333%;\n\t}\n\t.column.is-offset-one-quarter-touch {\n\t\tmargin-left: 25%;\n\t}\n\t.column.is-offset-one-fifth-touch {\n\t\tmargin-left: 20%;\n\t}\n\t.column.is-offset-two-fifths-touch {\n\t\tmargin-left: 40%;\n\t}\n\t.column.is-offset-three-fifths-touch {\n\t\tmargin-left: 60%;\n\t}\n\t.column.is-offset-four-fifths-touch {\n\t\tmargin-left: 80%;\n\t}\n\t.column.is-0-touch {\n\t\tflex: none;\n\t\twidth: 0;\n\t}\n\t.column.is-offset-0-touch {\n\t\tmargin-left: 0;\n\t}\n\t.column.is-1-touch {\n\t\tflex: none;\n\t\twidth: 8.33333%;\n\t}\n\t.column.is-offset-1-touch {\n\t\tmargin-left: 8.33333%;\n\t}\n\t.column.is-2-touch {\n\t\tflex: none;\n\t\twidth: 16.66667%;\n\t}\n\t.column.is-offset-2-touch {\n\t\tmargin-left: 16.66667%;\n\t}\n\t.column.is-3-touch {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.column.is-offset-3-touch {\n\t\tmargin-left: 25%;\n\t}\n\t.column.is-4-touch {\n\t\tflex: none;\n\t\twidth: 33.33333%;\n\t}\n\t.column.is-offset-4-touch {\n\t\tmargin-left: 33.33333%;\n\t}\n\t.column.is-5-touch {\n\t\tflex: none;\n\t\twidth: 41.66667%;\n\t}\n\t.column.is-offset-5-touch {\n\t\tmargin-left: 41.66667%;\n\t}\n\t.column.is-6-touch {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.column.is-offset-6-touch {\n\t\tmargin-left: 50%;\n\t}\n\t.column.is-7-touch {\n\t\tflex: none;\n\t\twidth: 58.33333%;\n\t}\n\t.column.is-offset-7-touch {\n\t\tmargin-left: 58.33333%;\n\t}\n\t.column.is-8-touch {\n\t\tflex: none;\n\t\twidth: 66.66667%;\n\t}\n\t.column.is-offset-8-touch {\n\t\tmargin-left: 66.66667%;\n\t}\n\t.column.is-9-touch {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.column.is-offset-9-touch {\n\t\tmargin-left: 75%;\n\t}\n\t.column.is-10-touch {\n\t\tflex: none;\n\t\twidth: 83.33333%;\n\t}\n\t.column.is-offset-10-touch {\n\t\tmargin-left: 83.33333%;\n\t}\n\t.column.is-11-touch {\n\t\tflex: none;\n\t\twidth: 91.66667%;\n\t}\n\t.column.is-offset-11-touch {\n\t\tmargin-left: 91.66667%;\n\t}\n\t.column.is-12-touch {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n\t.column.is-offset-12-touch {\n\t\tmargin-left: 100%;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.column.is-narrow-desktop {\n\t\tflex: none;\n\t}\n\t.column.is-full-desktop {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n\t.column.is-three-quarters-desktop {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.column.is-two-thirds-desktop {\n\t\tflex: none;\n\t\twidth: 66.6666%;\n\t}\n\t.column.is-half-desktop {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.column.is-one-third-desktop {\n\t\tflex: none;\n\t\twidth: 33.3333%;\n\t}\n\t.column.is-one-quarter-desktop {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.column.is-one-fifth-desktop {\n\t\tflex: none;\n\t\twidth: 20%;\n\t}\n\t.column.is-two-fifths-desktop {\n\t\tflex: none;\n\t\twidth: 40%;\n\t}\n\t.column.is-three-fifths-desktop {\n\t\tflex: none;\n\t\twidth: 60%;\n\t}\n\t.column.is-four-fifths-desktop {\n\t\tflex: none;\n\t\twidth: 80%;\n\t}\n\t.column.is-offset-three-quarters-desktop {\n\t\tmargin-left: 75%;\n\t}\n\t.column.is-offset-two-thirds-desktop {\n\t\tmargin-left: 66.6666%;\n\t}\n\t.column.is-offset-half-desktop {\n\t\tmargin-left: 50%;\n\t}\n\t.column.is-offset-one-third-desktop {\n\t\tmargin-left: 33.3333%;\n\t}\n\t.column.is-offset-one-quarter-desktop {\n\t\tmargin-left: 25%;\n\t}\n\t.column.is-offset-one-fifth-desktop {\n\t\tmargin-left: 20%;\n\t}\n\t.column.is-offset-two-fifths-desktop {\n\t\tmargin-left: 40%;\n\t}\n\t.column.is-offset-three-fifths-desktop {\n\t\tmargin-left: 60%;\n\t}\n\t.column.is-offset-four-fifths-desktop {\n\t\tmargin-left: 80%;\n\t}\n\t.column.is-0-desktop {\n\t\tflex: none;\n\t\twidth: 0;\n\t}\n\t.column.is-offset-0-desktop {\n\t\tmargin-left: 0;\n\t}\n\t.column.is-1-desktop {\n\t\tflex: none;\n\t\twidth: 8.33333%;\n\t}\n\t.column.is-offset-1-desktop {\n\t\tmargin-left: 8.33333%;\n\t}\n\t.column.is-2-desktop {\n\t\tflex: none;\n\t\twidth: 16.66667%;\n\t}\n\t.column.is-offset-2-desktop {\n\t\tmargin-left: 16.66667%;\n\t}\n\t.column.is-3-desktop {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.column.is-offset-3-desktop {\n\t\tmargin-left: 25%;\n\t}\n\t.column.is-4-desktop {\n\t\tflex: none;\n\t\twidth: 33.33333%;\n\t}\n\t.column.is-offset-4-desktop {\n\t\tmargin-left: 33.33333%;\n\t}\n\t.column.is-5-desktop {\n\t\tflex: none;\n\t\twidth: 41.66667%;\n\t}\n\t.column.is-offset-5-desktop {\n\t\tmargin-left: 41.66667%;\n\t}\n\t.column.is-6-desktop {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.column.is-offset-6-desktop {\n\t\tmargin-left: 50%;\n\t}\n\t.column.is-7-desktop {\n\t\tflex: none;\n\t\twidth: 58.33333%;\n\t}\n\t.column.is-offset-7-desktop {\n\t\tmargin-left: 58.33333%;\n\t}\n\t.column.is-8-desktop {\n\t\tflex: none;\n\t\twidth: 66.66667%;\n\t}\n\t.column.is-offset-8-desktop {\n\t\tmargin-left: 66.66667%;\n\t}\n\t.column.is-9-desktop {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.column.is-offset-9-desktop {\n\t\tmargin-left: 75%;\n\t}\n\t.column.is-10-desktop {\n\t\tflex: none;\n\t\twidth: 83.33333%;\n\t}\n\t.column.is-offset-10-desktop {\n\t\tmargin-left: 83.33333%;\n\t}\n\t.column.is-11-desktop {\n\t\tflex: none;\n\t\twidth: 91.66667%;\n\t}\n\t.column.is-offset-11-desktop {\n\t\tmargin-left: 91.66667%;\n\t}\n\t.column.is-12-desktop {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n\t.column.is-offset-12-desktop {\n\t\tmargin-left: 100%;\n\t}\n}\n.columns {\n\tmargin-left: -0.75rem;\n\tmargin-right: -0.75rem;\n\tmargin-top: -0.75rem;\n}\n.columns:last-child {\n\tmargin-bottom: -0.75rem;\n}\n.columns:not(:last-child) {\n\tmargin-bottom: 0.75rem;\n}\n.columns.is-centered {\n\tjustify-content: center;\n}\n.columns.is-gapless {\n\tmargin-left: 0;\n\tmargin-right: 0;\n\tmargin-top: 0;\n}\n.columns.is-gapless > .column {\n\tmargin: 0;\n\tpadding: 0 !important;\n}\n.columns.is-gapless:not(:last-child) {\n\tmargin-bottom: 1.5rem;\n}\n.columns.is-gapless:last-child {\n\tmargin-bottom: 0;\n}\n.columns.is-mobile {\n\tdisplay: flex;\n}\n.columns.is-multiline {\n\tflex-wrap: wrap;\n}\n.columns.is-vcentered {\n\talign-items: center;\n}\n@media print, screen and (min-width: 769px) {\n\t.columns:not(.is-desktop) {\n\t\tdisplay: flex;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-desktop {\n\t\tdisplay: flex;\n\t}\n}\n.columns.is-variable {\n\t--columnGap: 0.75rem;\n\tmargin-left: calc(-1 * var(--columnGap));\n\tmargin-right: calc(-1 * var(--columnGap));\n}\n.columns.is-variable .column {\n\tpadding-left: var(--columnGap);\n\tpadding-right: var(--columnGap);\n}\n.columns.is-variable.is-0 {\n\t--columnGap: 0rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-0-mobile {\n\t\t--columnGap: 0rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-0-tablet {\n\t\t--columnGap: 0rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-0-tablet-only {\n\t\t--columnGap: 0rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-0-touch {\n\t\t--columnGap: 0rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-0-desktop {\n\t\t--columnGap: 0rem;\n\t}\n}\n.columns.is-variable.is-1 {\n\t--columnGap: 0.25rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-1-mobile {\n\t\t--columnGap: 0.25rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-1-tablet {\n\t\t--columnGap: 0.25rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-1-tablet-only {\n\t\t--columnGap: 0.25rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-1-touch {\n\t\t--columnGap: 0.25rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-1-desktop {\n\t\t--columnGap: 0.25rem;\n\t}\n}\n.columns.is-variable.is-2 {\n\t--columnGap: 0.5rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-2-mobile {\n\t\t--columnGap: 0.5rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-2-tablet {\n\t\t--columnGap: 0.5rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-2-tablet-only {\n\t\t--columnGap: 0.5rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-2-touch {\n\t\t--columnGap: 0.5rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-2-desktop {\n\t\t--columnGap: 0.5rem;\n\t}\n}\n.columns.is-variable.is-3 {\n\t--columnGap: 0.75rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-3-mobile {\n\t\t--columnGap: 0.75rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-3-tablet {\n\t\t--columnGap: 0.75rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-3-tablet-only {\n\t\t--columnGap: 0.75rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-3-touch {\n\t\t--columnGap: 0.75rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-3-desktop {\n\t\t--columnGap: 0.75rem;\n\t}\n}\n.columns.is-variable.is-4 {\n\t--columnGap: 1rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-4-mobile {\n\t\t--columnGap: 1rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-4-tablet {\n\t\t--columnGap: 1rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-4-tablet-only {\n\t\t--columnGap: 1rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-4-touch {\n\t\t--columnGap: 1rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-4-desktop {\n\t\t--columnGap: 1rem;\n\t}\n}\n.columns.is-variable.is-5 {\n\t--columnGap: 1.25rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-5-mobile {\n\t\t--columnGap: 1.25rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-5-tablet {\n\t\t--columnGap: 1.25rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-5-tablet-only {\n\t\t--columnGap: 1.25rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-5-touch {\n\t\t--columnGap: 1.25rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-5-desktop {\n\t\t--columnGap: 1.25rem;\n\t}\n}\n.columns.is-variable.is-6 {\n\t--columnGap: 1.5rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-6-mobile {\n\t\t--columnGap: 1.5rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-6-tablet {\n\t\t--columnGap: 1.5rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-6-tablet-only {\n\t\t--columnGap: 1.5rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-6-touch {\n\t\t--columnGap: 1.5rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-6-desktop {\n\t\t--columnGap: 1.5rem;\n\t}\n}\n.columns.is-variable.is-7 {\n\t--columnGap: 1.75rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-7-mobile {\n\t\t--columnGap: 1.75rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-7-tablet {\n\t\t--columnGap: 1.75rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-7-tablet-only {\n\t\t--columnGap: 1.75rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-7-touch {\n\t\t--columnGap: 1.75rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-7-desktop {\n\t\t--columnGap: 1.75rem;\n\t}\n}\n.columns.is-variable.is-8 {\n\t--columnGap: 2rem;\n}\n@media screen and (max-width: 768px) {\n\t.columns.is-variable.is-8-mobile {\n\t\t--columnGap: 2rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.columns.is-variable.is-8-tablet {\n\t\t--columnGap: 2rem;\n\t}\n}\n@media screen and (min-width: 769px) and (max-width: 1023px) {\n\t.columns.is-variable.is-8-tablet-only {\n\t\t--columnGap: 2rem;\n\t}\n}\n@media screen and (max-width: 1023px) {\n\t.columns.is-variable.is-8-touch {\n\t\t--columnGap: 2rem;\n\t}\n}\n@media screen and (min-width: 1024px) {\n\t.columns.is-variable.is-8-desktop {\n\t\t--columnGap: 2rem;\n\t}\n}\n.tile {\n\talign-items: stretch;\n\tdisplay: block;\n\tflex-basis: 0;\n\tflex-grow: 1;\n\tflex-shrink: 1;\n\tmin-height: min-content;\n}\n.tile.is-ancestor {\n\tmargin-left: -0.75rem;\n\tmargin-right: -0.75rem;\n\tmargin-top: -0.75rem;\n}\n.tile.is-ancestor:last-child {\n\tmargin-bottom: -0.75rem;\n}\n.tile.is-ancestor:not(:last-child) {\n\tmargin-bottom: 0.75rem;\n}\n.tile.is-child {\n\tmargin: 0 !important;\n}\n.tile.is-parent {\n\tpadding: 0.75rem;\n}\n.tile.is-vertical {\n\tflex-direction: column;\n}\n.tile.is-vertical > .tile.is-child:not(:last-child) {\n\tmargin-bottom: 1.5rem !important;\n}\n@media print, screen and (min-width: 769px) {\n\t.tile:not(.is-child) {\n\t\tdisplay: flex;\n\t}\n\t.tile.is-1 {\n\t\tflex: none;\n\t\twidth: 8.33333%;\n\t}\n\t.tile.is-2 {\n\t\tflex: none;\n\t\twidth: 16.66667%;\n\t}\n\t.tile.is-3 {\n\t\tflex: none;\n\t\twidth: 25%;\n\t}\n\t.tile.is-4 {\n\t\tflex: none;\n\t\twidth: 33.33333%;\n\t}\n\t.tile.is-5 {\n\t\tflex: none;\n\t\twidth: 41.66667%;\n\t}\n\t.tile.is-6 {\n\t\tflex: none;\n\t\twidth: 50%;\n\t}\n\t.tile.is-7 {\n\t\tflex: none;\n\t\twidth: 58.33333%;\n\t}\n\t.tile.is-8 {\n\t\tflex: none;\n\t\twidth: 66.66667%;\n\t}\n\t.tile.is-9 {\n\t\tflex: none;\n\t\twidth: 75%;\n\t}\n\t.tile.is-10 {\n\t\tflex: none;\n\t\twidth: 83.33333%;\n\t}\n\t.tile.is-11 {\n\t\tflex: none;\n\t\twidth: 91.66667%;\n\t}\n\t.tile.is-12 {\n\t\tflex: none;\n\t\twidth: 100%;\n\t}\n}\n.hero {\n\talign-items: stretch;\n\tdisplay: flex;\n\tflex-direction: column;\n\tjustify-content: space-between;\n}\n.hero .navbar {\n\tbackground: none;\n}\n.hero .tabs ul {\n\tborder-bottom: none;\n}\n.hero.is-white {\n\tbackground-color: #fff;\n\tcolor: #0a0a0a;\n}\n.hero.is-white\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-white strong {\n\tcolor: inherit;\n}\n.hero.is-white .title {\n\tcolor: #0a0a0a;\n}\n.hero.is-white .subtitle {\n\tcolor: rgba(10, 10, 10, 0.9);\n}\n.hero.is-white .subtitle a:not(.button),\n.hero.is-white .subtitle strong {\n\tcolor: #0a0a0a;\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-white .navbar-menu {\n\t\tbackground-color: #fff;\n\t}\n}\n.hero.is-white .navbar-item,\n.hero.is-white .navbar-link {\n\tcolor: rgba(10, 10, 10, 0.7);\n}\n.hero.is-white .navbar-link.is-active,\n.hero.is-white .navbar-link:hover,\n.hero.is-white a.navbar-item.is-active,\n.hero.is-white a.navbar-item:hover {\n\tbackground-color: #f2f2f2;\n\tcolor: #0a0a0a;\n}\n.hero.is-white .tabs a {\n\tcolor: #0a0a0a;\n\topacity: 0.9;\n}\n.hero.is-white .tabs a:hover,\n.hero.is-white .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-white .tabs.is-boxed a,\n.hero.is-white .tabs.is-toggle a {\n\tcolor: #0a0a0a;\n}\n.hero.is-white .tabs.is-boxed a:hover,\n.hero.is-white .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-white .tabs.is-boxed li.is-active a,\n.hero.is-white .tabs.is-boxed li.is-active a:hover,\n.hero.is-white .tabs.is-toggle li.is-active a,\n.hero.is-white .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: #0a0a0a;\n\tborder-color: #0a0a0a;\n\tcolor: #fff;\n}\n.hero.is-white.is-bold {\n\tbackground-image: linear-gradient(141deg, #e6e6e6, #fff 71%, #fff);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-white.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #e6e6e6, #fff 71%, #fff);\n\t}\n}\n.hero.is-black {\n\tbackground-color: #0a0a0a;\n\tcolor: #fff;\n}\n.hero.is-black\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-black strong {\n\tcolor: inherit;\n}\n.hero.is-black .title {\n\tcolor: #fff;\n}\n.hero.is-black .subtitle {\n\tcolor: hsla(0, 0%, 100%, 0.9);\n}\n.hero.is-black .subtitle a:not(.button),\n.hero.is-black .subtitle strong {\n\tcolor: #fff;\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-black .navbar-menu {\n\t\tbackground-color: #0a0a0a;\n\t}\n}\n.hero.is-black .navbar-item,\n.hero.is-black .navbar-link {\n\tcolor: hsla(0, 0%, 100%, 0.7);\n}\n.hero.is-black .navbar-link.is-active,\n.hero.is-black .navbar-link:hover,\n.hero.is-black a.navbar-item.is-active,\n.hero.is-black a.navbar-item:hover {\n\tbackground-color: #000;\n\tcolor: #fff;\n}\n.hero.is-black .tabs a {\n\tcolor: #fff;\n\topacity: 0.9;\n}\n.hero.is-black .tabs a:hover,\n.hero.is-black .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-black .tabs.is-boxed a,\n.hero.is-black .tabs.is-toggle a {\n\tcolor: #fff;\n}\n.hero.is-black .tabs.is-boxed a:hover,\n.hero.is-black .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-black .tabs.is-boxed li.is-active a,\n.hero.is-black .tabs.is-boxed li.is-active a:hover,\n.hero.is-black .tabs.is-toggle li.is-active a,\n.hero.is-black .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #0a0a0a;\n}\n.hero.is-black.is-bold {\n\tbackground-image: linear-gradient(141deg, #000, #0a0a0a 71%, #181616);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-black.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #000, #0a0a0a 71%, #181616);\n\t}\n}\n.hero.is-light {\n\tbackground-color: #f5f5f5;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-light\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-light strong {\n\tcolor: inherit;\n}\n.hero.is-light .title {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-light .subtitle {\n\tcolor: rgba(0, 0, 0, 0.9);\n}\n.hero.is-light .subtitle a:not(.button),\n.hero.is-light .subtitle strong {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-light .navbar-menu {\n\t\tbackground-color: #f5f5f5;\n\t}\n}\n.hero.is-light .navbar-item,\n.hero.is-light .navbar-link {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-light .navbar-link.is-active,\n.hero.is-light .navbar-link:hover,\n.hero.is-light a.navbar-item.is-active,\n.hero.is-light a.navbar-item:hover {\n\tbackground-color: #e8e8e8;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-light .tabs a {\n\tcolor: rgba(0, 0, 0, 0.7);\n\topacity: 0.9;\n}\n.hero.is-light .tabs a:hover,\n.hero.is-light .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-light .tabs.is-boxed a,\n.hero.is-light .tabs.is-toggle a {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-light .tabs.is-boxed a:hover,\n.hero.is-light .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-light .tabs.is-boxed li.is-active a,\n.hero.is-light .tabs.is-boxed li.is-active a:hover,\n.hero.is-light .tabs.is-toggle li.is-active a,\n.hero.is-light .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: rgba(0, 0, 0, 0.7);\n\tborder-color: rgba(0, 0, 0, 0.7);\n\tcolor: #f5f5f5;\n}\n.hero.is-light.is-bold {\n\tbackground-image: linear-gradient(141deg, #dfd8d9, #f5f5f5 71%, #fff);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-light.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #dfd8d9, #f5f5f5 71%, #fff);\n\t}\n}\n.hero.is-dark {\n\tbackground-color: #363636;\n\tcolor: #fff;\n}\n.hero.is-dark\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-dark strong {\n\tcolor: inherit;\n}\n.hero.is-dark .title {\n\tcolor: #fff;\n}\n.hero.is-dark .subtitle {\n\tcolor: hsla(0, 0%, 100%, 0.9);\n}\n.hero.is-dark .subtitle a:not(.button),\n.hero.is-dark .subtitle strong {\n\tcolor: #fff;\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-dark .navbar-menu {\n\t\tbackground-color: #363636;\n\t}\n}\n.hero.is-dark .navbar-item,\n.hero.is-dark .navbar-link {\n\tcolor: hsla(0, 0%, 100%, 0.7);\n}\n.hero.is-dark .navbar-link.is-active,\n.hero.is-dark .navbar-link:hover,\n.hero.is-dark a.navbar-item.is-active,\n.hero.is-dark a.navbar-item:hover {\n\tbackground-color: #292929;\n\tcolor: #fff;\n}\n.hero.is-dark .tabs a {\n\tcolor: #fff;\n\topacity: 0.9;\n}\n.hero.is-dark .tabs a:hover,\n.hero.is-dark .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-dark .tabs.is-boxed a,\n.hero.is-dark .tabs.is-toggle a {\n\tcolor: #fff;\n}\n.hero.is-dark .tabs.is-boxed a:hover,\n.hero.is-dark .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-dark .tabs.is-boxed li.is-active a,\n.hero.is-dark .tabs.is-boxed li.is-active a:hover,\n.hero.is-dark .tabs.is-toggle li.is-active a,\n.hero.is-dark .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #363636;\n}\n.hero.is-dark.is-bold {\n\tbackground-image: linear-gradient(141deg, #1f191a, #363636 71%, #46403f);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-dark.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #1f191a, #363636 71%, #46403f);\n\t}\n}\n.hero.is-primary {\n\tbackground-color: #454545;\n\tcolor: #fff;\n}\n.hero.is-primary\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-primary strong {\n\tcolor: inherit;\n}\n.hero.is-primary .title {\n\tcolor: #fff;\n}\n.hero.is-primary .subtitle {\n\tcolor: hsla(0, 0%, 100%, 0.9);\n}\n.hero.is-primary .subtitle a:not(.button),\n.hero.is-primary .subtitle strong {\n\tcolor: #fff;\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-primary .navbar-menu {\n\t\tbackground-color: #454545;\n\t}\n}\n.hero.is-primary .navbar-item,\n.hero.is-primary .navbar-link {\n\tcolor: hsla(0, 0%, 100%, 0.7);\n}\n.hero.is-primary .navbar-link.is-active,\n.hero.is-primary .navbar-link:hover,\n.hero.is-primary a.navbar-item.is-active,\n.hero.is-primary a.navbar-item:hover {\n\tbackground-color: #383838;\n\tcolor: #fff;\n}\n.hero.is-primary .tabs a {\n\tcolor: #fff;\n\topacity: 0.9;\n}\n.hero.is-primary .tabs a:hover,\n.hero.is-primary .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-primary .tabs.is-boxed a,\n.hero.is-primary .tabs.is-toggle a {\n\tcolor: #fff;\n}\n.hero.is-primary .tabs.is-boxed a:hover,\n.hero.is-primary .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-primary .tabs.is-boxed li.is-active a,\n.hero.is-primary .tabs.is-boxed li.is-active a:hover,\n.hero.is-primary .tabs.is-toggle li.is-active a,\n.hero.is-primary .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #454545;\n}\n.hero.is-primary.is-bold {\n\tbackground-image: linear-gradient(141deg, #302729, #454545 71%, #564f4e);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-primary.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #302729, #454545 71%, #564f4e);\n\t}\n}\n.hero.is-link {\n\tbackground-color: #00d1b2;\n\tcolor: #fff;\n}\n.hero.is-link\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-link strong {\n\tcolor: inherit;\n}\n.hero.is-link .title {\n\tcolor: #fff;\n}\n.hero.is-link .subtitle {\n\tcolor: hsla(0, 0%, 100%, 0.9);\n}\n.hero.is-link .subtitle a:not(.button),\n.hero.is-link .subtitle strong {\n\tcolor: #fff;\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-link .navbar-menu {\n\t\tbackground-color: #00d1b2;\n\t}\n}\n.hero.is-link .navbar-item,\n.hero.is-link .navbar-link {\n\tcolor: hsla(0, 0%, 100%, 0.7);\n}\n.hero.is-link .navbar-link.is-active,\n.hero.is-link .navbar-link:hover,\n.hero.is-link a.navbar-item.is-active,\n.hero.is-link a.navbar-item:hover {\n\tbackground-color: #00b89c;\n\tcolor: #fff;\n}\n.hero.is-link .tabs a {\n\tcolor: #fff;\n\topacity: 0.9;\n}\n.hero.is-link .tabs a:hover,\n.hero.is-link .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-link .tabs.is-boxed a,\n.hero.is-link .tabs.is-toggle a {\n\tcolor: #fff;\n}\n.hero.is-link .tabs.is-boxed a:hover,\n.hero.is-link .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-link .tabs.is-boxed li.is-active a,\n.hero.is-link .tabs.is-boxed li.is-active a:hover,\n.hero.is-link .tabs.is-toggle li.is-active a,\n.hero.is-link .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #00d1b2;\n}\n.hero.is-link.is-bold {\n\tbackground-image: linear-gradient(141deg, #009e6c, #00d1b2 71%, #00e7eb);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-link.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #009e6c, #00d1b2 71%, #00e7eb);\n\t}\n}\n.hero.is-info {\n\tbackground-color: #3298dc;\n\tcolor: #fff;\n}\n.hero.is-info\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-info strong {\n\tcolor: inherit;\n}\n.hero.is-info .title {\n\tcolor: #fff;\n}\n.hero.is-info .subtitle {\n\tcolor: hsla(0, 0%, 100%, 0.9);\n}\n.hero.is-info .subtitle a:not(.button),\n.hero.is-info .subtitle strong {\n\tcolor: #fff;\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-info .navbar-menu {\n\t\tbackground-color: #3298dc;\n\t}\n}\n.hero.is-info .navbar-item,\n.hero.is-info .navbar-link {\n\tcolor: hsla(0, 0%, 100%, 0.7);\n}\n.hero.is-info .navbar-link.is-active,\n.hero.is-info .navbar-link:hover,\n.hero.is-info a.navbar-item.is-active,\n.hero.is-info a.navbar-item:hover {\n\tbackground-color: #238cd1;\n\tcolor: #fff;\n}\n.hero.is-info .tabs a {\n\tcolor: #fff;\n\topacity: 0.9;\n}\n.hero.is-info .tabs a:hover,\n.hero.is-info .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-info .tabs.is-boxed a,\n.hero.is-info .tabs.is-toggle a {\n\tcolor: #fff;\n}\n.hero.is-info .tabs.is-boxed a:hover,\n.hero.is-info .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-info .tabs.is-boxed li.is-active a,\n.hero.is-info .tabs.is-boxed li.is-active a:hover,\n.hero.is-info .tabs.is-toggle li.is-active a,\n.hero.is-info .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #3298dc;\n}\n.hero.is-info.is-bold {\n\tbackground-image: linear-gradient(141deg, #159dc6, #3298dc 71%, #4389e5);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-info.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #159dc6, #3298dc 71%, #4389e5);\n\t}\n}\n.hero.is-success {\n\tbackground-color: #48c774;\n\tcolor: #fff;\n}\n.hero.is-success\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-success strong {\n\tcolor: inherit;\n}\n.hero.is-success .title {\n\tcolor: #fff;\n}\n.hero.is-success .subtitle {\n\tcolor: hsla(0, 0%, 100%, 0.9);\n}\n.hero.is-success .subtitle a:not(.button),\n.hero.is-success .subtitle strong {\n\tcolor: #fff;\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-success .navbar-menu {\n\t\tbackground-color: #48c774;\n\t}\n}\n.hero.is-success .navbar-item,\n.hero.is-success .navbar-link {\n\tcolor: hsla(0, 0%, 100%, 0.7);\n}\n.hero.is-success .navbar-link.is-active,\n.hero.is-success .navbar-link:hover,\n.hero.is-success a.navbar-item.is-active,\n.hero.is-success a.navbar-item:hover {\n\tbackground-color: #3abb67;\n\tcolor: #fff;\n}\n.hero.is-success .tabs a {\n\tcolor: #fff;\n\topacity: 0.9;\n}\n.hero.is-success .tabs a:hover,\n.hero.is-success .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-success .tabs.is-boxed a,\n.hero.is-success .tabs.is-toggle a {\n\tcolor: #fff;\n}\n.hero.is-success .tabs.is-boxed a:hover,\n.hero.is-success .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-success .tabs.is-boxed li.is-active a,\n.hero.is-success .tabs.is-boxed li.is-active a:hover,\n.hero.is-success .tabs.is-toggle li.is-active a,\n.hero.is-success .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #48c774;\n}\n.hero.is-success.is-bold {\n\tbackground-image: linear-gradient(141deg, #29b342, #48c774 71%, #56d296);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-success.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #29b342, #48c774 71%, #56d296);\n\t}\n}\n.hero.is-warning {\n\tbackground-color: #ffdd57;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-warning\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-warning strong {\n\tcolor: inherit;\n}\n.hero.is-warning .title {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-warning .subtitle {\n\tcolor: rgba(0, 0, 0, 0.9);\n}\n.hero.is-warning .subtitle a:not(.button),\n.hero.is-warning .subtitle strong {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-warning .navbar-menu {\n\t\tbackground-color: #ffdd57;\n\t}\n}\n.hero.is-warning .navbar-item,\n.hero.is-warning .navbar-link {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-warning .navbar-link.is-active,\n.hero.is-warning .navbar-link:hover,\n.hero.is-warning a.navbar-item.is-active,\n.hero.is-warning a.navbar-item:hover {\n\tbackground-color: #ffd83d;\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-warning .tabs a {\n\tcolor: rgba(0, 0, 0, 0.7);\n\topacity: 0.9;\n}\n.hero.is-warning .tabs a:hover,\n.hero.is-warning .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-warning .tabs.is-boxed a,\n.hero.is-warning .tabs.is-toggle a {\n\tcolor: rgba(0, 0, 0, 0.7);\n}\n.hero.is-warning .tabs.is-boxed a:hover,\n.hero.is-warning .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-warning .tabs.is-boxed li.is-active a,\n.hero.is-warning .tabs.is-boxed li.is-active a:hover,\n.hero.is-warning .tabs.is-toggle li.is-active a,\n.hero.is-warning .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: rgba(0, 0, 0, 0.7);\n\tborder-color: rgba(0, 0, 0, 0.7);\n\tcolor: #ffdd57;\n}\n.hero.is-warning.is-bold {\n\tbackground-image: linear-gradient(141deg, #ffaf24, #ffdd57 71%, #fffa70);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-warning.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #ffaf24, #ffdd57 71%, #fffa70);\n\t}\n}\n.hero.is-danger {\n\tbackground-color: #f14668;\n\tcolor: #fff;\n}\n.hero.is-danger\n\ta:not(.button):not(.dropdown-item):not(.tag):not(.pagination-link.is-current),\n.hero.is-danger strong {\n\tcolor: inherit;\n}\n.hero.is-danger .title {\n\tcolor: #fff;\n}\n.hero.is-danger .subtitle {\n\tcolor: hsla(0, 0%, 100%, 0.9);\n}\n.hero.is-danger .subtitle a:not(.button),\n.hero.is-danger .subtitle strong {\n\tcolor: #fff;\n}\n@media screen and (max-width: 1023px) {\n\t.hero.is-danger .navbar-menu {\n\t\tbackground-color: #f14668;\n\t}\n}\n.hero.is-danger .navbar-item,\n.hero.is-danger .navbar-link {\n\tcolor: hsla(0, 0%, 100%, 0.7);\n}\n.hero.is-danger .navbar-link.is-active,\n.hero.is-danger .navbar-link:hover,\n.hero.is-danger a.navbar-item.is-active,\n.hero.is-danger a.navbar-item:hover {\n\tbackground-color: #ef2e55;\n\tcolor: #fff;\n}\n.hero.is-danger .tabs a {\n\tcolor: #fff;\n\topacity: 0.9;\n}\n.hero.is-danger .tabs a:hover,\n.hero.is-danger .tabs li.is-active a {\n\topacity: 1;\n}\n.hero.is-danger .tabs.is-boxed a,\n.hero.is-danger .tabs.is-toggle a {\n\tcolor: #fff;\n}\n.hero.is-danger .tabs.is-boxed a:hover,\n.hero.is-danger .tabs.is-toggle a:hover {\n\tbackground-color: rgba(10, 10, 10, 0.1);\n}\n.hero.is-danger .tabs.is-boxed li.is-active a,\n.hero.is-danger .tabs.is-boxed li.is-active a:hover,\n.hero.is-danger .tabs.is-toggle li.is-active a,\n.hero.is-danger .tabs.is-toggle li.is-active a:hover {\n\tbackground-color: #fff;\n\tborder-color: #fff;\n\tcolor: #f14668;\n}\n.hero.is-danger.is-bold {\n\tbackground-image: linear-gradient(141deg, #fa0a62, #f14668 71%, #f7595f);\n}\n@media screen and (max-width: 768px) {\n\t.hero.is-danger.is-bold .navbar-menu {\n\t\tbackground-image: linear-gradient(141deg, #fa0a62, #f14668 71%, #f7595f);\n\t}\n}\n.hero.is-small .hero-body {\n\tpadding: 1.5rem;\n}\n@media print, screen and (min-width: 769px) {\n\t.hero.is-medium .hero-body {\n\t\tpadding: 9rem 1.5rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.hero.is-large .hero-body {\n\t\tpadding: 18rem 1.5rem;\n\t}\n}\n.hero.is-fullheight-with-navbar .hero-body,\n.hero.is-fullheight .hero-body,\n.hero.is-halfheight .hero-body {\n\talign-items: center;\n\tdisplay: flex;\n}\n.hero.is-fullheight-with-navbar .hero-body > .container,\n.hero.is-fullheight .hero-body > .container,\n.hero.is-halfheight .hero-body > .container {\n\tflex-grow: 1;\n\tflex-shrink: 1;\n}\n.hero.is-halfheight {\n\tmin-height: 50vh;\n}\n.hero.is-fullheight {\n\tmin-height: 100vh;\n}\n.hero-video {\n\toverflow: hidden;\n}\n.hero-video video {\n\tleft: 50%;\n\tmin-height: 100%;\n\tmin-width: 100%;\n\tposition: absolute;\n\ttop: 50%;\n\ttransform: translate3d(-50%, -50%, 0);\n}\n.hero-video.is-transparent {\n\topacity: 0.3;\n}\n@media screen and (max-width: 768px) {\n\t.hero-video {\n\t\tdisplay: none;\n\t}\n}\n.hero-buttons {\n\tmargin-top: 1.5rem;\n}\n@media screen and (max-width: 768px) {\n\t.hero-buttons .button {\n\t\tdisplay: flex;\n\t}\n\t.hero-buttons .button:not(:last-child) {\n\t\tmargin-bottom: 0.75rem;\n\t}\n}\n@media print, screen and (min-width: 769px) {\n\t.hero-buttons {\n\t\tdisplay: flex;\n\t\tjustify-content: center;\n\t}\n\t.hero-buttons .button:not(:last-child) {\n\t\tmargin-right: 1.5rem;\n\t}\n}\n.hero-foot,\n.hero-head {\n\tflex-grow: 0;\n\tflex-shrink: 0;\n}\n.hero-body {\n\tflex-grow: 1;\n\tflex-shrink: 0;\n}\n.hero-body,\n.section {\n\tpadding: 3rem 1.5rem;\n}\n@media screen and (min-width: 1024px) {\n\t.section.is-medium {\n\t\tpadding: 9rem 1.5rem;\n\t}\n\t.section.is-large {\n\t\tpadding: 18rem 1.5rem;\n\t}\n}\n.footer {\n\tbackground-color: #fafafa;\n\tpadding: 3rem 1.5rem;\n}\n.section {\n\tpadding: 2.15rem 1.5rem;\n}\n.carousel-cell {\n\twidth: 100%;\n}\n.is-horizontal-center {\n\tjustify-content: center;\n}\n", ""]);
@@ -4359,21 +4897,21 @@ ___CSS_LOADER_EXPORT___.push([module.id, "/*! Flickity v2.2.1\nhttps://flickity.
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/.pnpm/postcss-loader@6.2.1_upg3rk2kpasnbk27hkqapxaxfq/node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/index.css":
-/*!*******************************************************************************************************************************************************************************************************************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/.pnpm/postcss-loader@6.2.1_upg3rk2kpasnbk27hkqapxaxfq/node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/index.css ***!
-  \*******************************************************************************************************************************************************************************************************************************************************************************************************/
+/***/ "./node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/index.css":
+/*!*********************************************************************************************************************************************************************************!*\
+  !*** ./node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/index.css ***!
+  \*********************************************************************************************************************************************************************************/
 /***/ ((module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/runtime/api.js */ "./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/runtime/api.js");
-/* harmony import */ var _node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../node_modules/css-loader/dist/runtime/api.js */ "./node_modules/css-loader/dist/runtime/api.js");
+/* harmony import */ var _node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0__);
 // Imports
 
-var ___CSS_LOADER_EXPORT___ = _node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0___default()(function(i){return i[1]});
+var ___CSS_LOADER_EXPORT___ = _node_modules_css_loader_dist_runtime_api_js__WEBPACK_IMPORTED_MODULE_0___default()(function(i){return i[1]});
 // Module
 ___CSS_LOADER_EXPORT___.push([module.id, "body {\n\tmargin: 0;\n\tfont-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"Roboto\", \"Oxygen\",\n\t\t\"Ubuntu\", \"Cantarell\", \"Fira Sans\", \"Droid Sans\", \"Helvetica Neue\",\n\t\tsans-serif;\n\t-webkit-font-smoothing: antialiased;\n\t-moz-osx-font-smoothing: grayscale;\n}\n\ncode {\n\tfont-family: source-code-pro, Menlo, Monaco, Consolas, \"Courier New\",\n\t\tmonospace;\n}\n", ""]);
 // Exports
@@ -4382,10 +4920,10 @@ ___CSS_LOADER_EXPORT___.push([module.id, "body {\n\tmargin: 0;\n\tfont-family: -
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/runtime/api.js":
-/*!********************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/runtime/api.js ***!
-  \********************************************************************************************************/
+/***/ "./node_modules/css-loader/dist/runtime/api.js":
+/*!*****************************************************!*\
+  !*** ./node_modules/css-loader/dist/runtime/api.js ***!
+  \*****************************************************/
 /***/ ((module) => {
 
 
@@ -4457,10 +4995,10 @@ module.exports = function (cssWithMappingToString) {
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/cjs/react-dom.development.js":
-/*!**************************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/cjs/react-dom.development.js ***!
-  \**************************************************************************************************************/
+/***/ "./node_modules/react-dom/cjs/react-dom.development.js":
+/*!*************************************************************!*\
+  !*** ./node_modules/react-dom/cjs/react-dom.development.js ***!
+  \*************************************************************/
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 /**
@@ -4488,8 +5026,8 @@ if (
 ) {
   __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(new Error());
 }
-          var React = __webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js");
-var Scheduler = __webpack_require__(/*! scheduler */ "./node_modules/.pnpm/scheduler@0.23.0/node_modules/scheduler/index.js");
+          var React = __webpack_require__(/*! react */ "./node_modules/react/index.js");
+var Scheduler = __webpack_require__(/*! scheduler */ "./node_modules/scheduler/index.js");
 
 var ReactSharedInternals = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
 
@@ -34330,15 +34868,15 @@ if (
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/client.js":
-/*!*******************************************************************************************!*\
-  !*** ./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/client.js ***!
-  \*******************************************************************************************/
+/***/ "./node_modules/react-dom/client.js":
+/*!******************************************!*\
+  !*** ./node_modules/react-dom/client.js ***!
+  \******************************************/
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 
-var m = __webpack_require__(/*! react-dom */ "./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/index.js");
+var m = __webpack_require__(/*! react-dom */ "./node_modules/react-dom/index.js");
 if (false) {} else {
   var i = m.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
   exports.createRoot = function(c, o) {
@@ -34362,10 +34900,10 @@ if (false) {} else {
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/index.js":
-/*!******************************************************************************************!*\
-  !*** ./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/index.js ***!
-  \******************************************************************************************/
+/***/ "./node_modules/react-dom/index.js":
+/*!*****************************************!*\
+  !*** ./node_modules/react-dom/index.js ***!
+  \*****************************************/
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
 
@@ -34399,16 +34937,16 @@ function checkDCE() {
 }
 
 if (false) {} else {
-  module.exports = __webpack_require__(/*! ./cjs/react-dom.development.js */ "./node_modules/.pnpm/react-dom@18.2.0_react@18.2.0/node_modules/react-dom/cjs/react-dom.development.js");
+  module.exports = __webpack_require__(/*! ./cjs/react-dom.development.js */ "./node_modules/react-dom/cjs/react-dom.development.js");
 }
 
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/react-router-dom@6.4.4_biqbaboplfbrettd7655fr4n2y/node_modules/react-router-dom/dist/index.js":
-/*!**************************************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/react-router-dom@6.4.4_biqbaboplfbrettd7655fr4n2y/node_modules/react-router-dom/dist/index.js ***!
-  \**************************************************************************************************************************/
+/***/ "./node_modules/react-router-dom/dist/index.js":
+/*!*****************************************************!*\
+  !*** ./node_modules/react-router-dom/dist/index.js ***!
+  \*****************************************************/
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -34431,11 +34969,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "ScrollRestoration": () => (/* binding */ ScrollRestoration),
 /* harmony export */   "UNSAFE_DataRouterContext": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_DataRouterContext),
 /* harmony export */   "UNSAFE_DataRouterStateContext": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_DataRouterStateContext),
-/* harmony export */   "UNSAFE_DataStaticRouterContext": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_DataStaticRouterContext),
 /* harmony export */   "UNSAFE_LocationContext": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_LocationContext),
 /* harmony export */   "UNSAFE_NavigationContext": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_NavigationContext),
 /* harmony export */   "UNSAFE_RouteContext": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_RouteContext),
 /* harmony export */   "UNSAFE_enhanceManualRouteObjects": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_enhanceManualRouteObjects),
+/* harmony export */   "UNSAFE_useScrollRestoration": () => (/* binding */ useScrollRestoration),
 /* harmony export */   "createBrowserRouter": () => (/* binding */ createBrowserRouter),
 /* harmony export */   "createHashRouter": () => (/* binding */ createHashRouter),
 /* harmony export */   "createMemoryRouter": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.createMemoryRouter),
@@ -34454,9 +34992,12 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "renderMatches": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.renderMatches),
 /* harmony export */   "resolvePath": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_1__.resolvePath),
 /* harmony export */   "unstable_HistoryRouter": () => (/* binding */ HistoryRouter),
+/* harmony export */   "unstable_useBlocker": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.unstable_useBlocker),
+/* harmony export */   "unstable_usePrompt": () => (/* binding */ usePrompt),
 /* harmony export */   "useActionData": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.useActionData),
 /* harmony export */   "useAsyncError": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.useAsyncError),
 /* harmony export */   "useAsyncValue": () => (/* reexport safe */ react_router__WEBPACK_IMPORTED_MODULE_2__.useAsyncValue),
+/* harmony export */   "useBeforeUnload": () => (/* binding */ useBeforeUnload),
 /* harmony export */   "useFetcher": () => (/* binding */ useFetcher),
 /* harmony export */   "useFetchers": () => (/* binding */ useFetchers),
 /* harmony export */   "useFormAction": () => (/* binding */ useFormAction),
@@ -34481,12 +35022,12 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "useSearchParams": () => (/* binding */ useSearchParams),
 /* harmony export */   "useSubmit": () => (/* binding */ useSubmit)
 /* harmony export */ });
-/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js");
+/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! react */ "./node_modules/react/index.js");
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_0__);
-/* harmony import */ var react_router__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! react-router */ "./node_modules/.pnpm/react-router@6.4.4_react@18.2.0/node_modules/react-router/dist/index.js");
-/* harmony import */ var react_router__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! @remix-run/router */ "./node_modules/.pnpm/@remix-run+router@1.0.4/node_modules/@remix-run/router/dist/router.js");
+/* harmony import */ var react_router__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! react-router */ "./node_modules/react-router/dist/index.js");
+/* harmony import */ var react_router__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! @remix-run/router */ "./node_modules/@remix-run/router/dist/router.js");
 /**
- * React Router DOM v6.4.4
+ * React Router DOM v6.8.1
  *
  * Copyright (c) Remix Software Inc.
  *
@@ -34592,11 +35133,13 @@ function createSearchParams(init) {
 function getSearchParamsForLocation(locationSearch, defaultSearchParams) {
   let searchParams = createSearchParams(locationSearch);
 
-  for (let key of defaultSearchParams.keys()) {
-    if (!searchParams.has(key)) {
-      defaultSearchParams.getAll(key).forEach(value => {
-        searchParams.append(key, value);
-      });
+  if (defaultSearchParams) {
+    for (let key of defaultSearchParams.keys()) {
+      if (!searchParams.has(key)) {
+        defaultSearchParams.getAll(key).forEach(value => {
+          searchParams.append(key, value);
+        });
+      }
     }
   }
 
@@ -34666,7 +35209,7 @@ function getFormSubmissionInfo(target, defaultAction, options) {
   let url = new URL(action, protocol + "//" + host);
   return {
     url,
-    method,
+    method: method.toLowerCase(),
     encType,
     formData
   };
@@ -34674,7 +35217,7 @@ function getFormSubmissionInfo(target, defaultAction, options) {
 
 const _excluded = ["onClick", "relative", "reloadDocument", "replace", "state", "target", "to", "preventScrollReset"],
       _excluded2 = ["aria-current", "caseSensitive", "className", "end", "style", "to", "children"],
-      _excluded3 = ["reloadDocument", "replace", "method", "action", "onSubmit", "fetcherKey", "routeId", "relative"];
+      _excluded3 = ["reloadDocument", "replace", "method", "action", "onSubmit", "fetcherKey", "routeId", "relative", "preventScrollReset"];
 //#region Routers
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -34723,6 +35266,12 @@ function deserializeErrors(errors) {
     // serializeErrors in react-router-dom/server.tsx :)
     if (val && val.__type === "RouteErrorResponse") {
       serialized[key] = new react_router__WEBPACK_IMPORTED_MODULE_1__.ErrorResponse(val.status, val.statusText, val.data, val.internal === true);
+    } else if (val && val.__type === "Error") {
+      let error = new Error(val.message); // Wipe away the client-side stack trace.  Nothing to fill it in with
+      // because we don't serialize SSR stack traces for security reasons
+
+      error.stack = "";
+      serialized[key] = error;
     } else {
       serialized[key] = val;
     }
@@ -34828,6 +35377,7 @@ function HistoryRouter(_ref3) {
 if (true) {
   HistoryRouter.displayName = "unstable_HistoryRouter";
 }
+const isBrowser = typeof window !== "undefined" && typeof window.document !== "undefined" && typeof window.document.createElement !== "undefined";
 /**
  * The public API for rendering a history-aware <a>.
  */
@@ -34844,6 +35394,24 @@ const Link = /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0__.forwardRef(function
     preventScrollReset
   } = _ref4,
       rest = _objectWithoutPropertiesLoose(_ref4, _excluded);
+
+  // Rendered into <a href> for absolute URLs
+  let absoluteHref;
+  let isExternal = false;
+
+  if (isBrowser && typeof to === "string" && /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(to)) {
+    absoluteHref = to;
+    let currentUrl = new URL(window.location.href);
+    let targetUrl = to.startsWith("//") ? new URL(currentUrl.protocol + to) : new URL(to);
+
+    if (targetUrl.origin === currentUrl.origin) {
+      // Strip the protocol/origin for same-origin absolute URLs
+      to = targetUrl.pathname + targetUrl.search + targetUrl.hash;
+    } else {
+      isExternal = true;
+    }
+  } // Rendered into <a href> for relative URLs
+
 
   let href = (0,react_router__WEBPACK_IMPORTED_MODULE_2__.useHref)(to, {
     relative
@@ -34868,8 +35436,8 @@ const Link = /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0__.forwardRef(function
     /*#__PURE__*/
     // eslint-disable-next-line jsx-a11y/anchor-has-content
     react__WEBPACK_IMPORTED_MODULE_0__.createElement("a", _extends({}, rest, {
-      href: href,
-      onClick: reloadDocument ? onClick : handleClick,
+      href: absoluteHref || href,
+      onClick: isExternal || reloadDocument ? onClick : handleClick,
       ref: ref,
       target: target
     }))
@@ -34979,7 +35547,8 @@ const FormImpl = /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0__.forwardRef((_re
     onSubmit,
     fetcherKey,
     routeId,
-    relative
+    relative,
+    preventScrollReset
   } = _ref6,
       props = _objectWithoutPropertiesLoose(_ref6, _excluded3);
 
@@ -34994,10 +35563,12 @@ const FormImpl = /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_0__.forwardRef((_re
     if (event.defaultPrevented) return;
     event.preventDefault();
     let submitter = event.nativeEvent.submitter;
+    let submitMethod = (submitter == null ? void 0 : submitter.getAttribute("formmethod")) || method;
     submit(submitter || event.currentTarget, {
-      method,
+      method: submitMethod,
       replace,
-      relative
+      relative,
+      preventScrollReset
     });
   };
 
@@ -35054,7 +35625,7 @@ var DataRouterStateHook;
 })(DataRouterStateHook || (DataRouterStateHook = {}));
 
 function getDataRouterConsoleError(hookName) {
-  return hookName + " must be used within a data router.  See https://reactrouter.com/en/main/routers/picking-a-router.";
+  return hookName + " must be used within a data router.  See https://reactrouter.com/routers/picking-a-router.";
 }
 
 function useDataRouterContext(hookName) {
@@ -35111,11 +35682,16 @@ function useLinkClickHandler(to, _temp) {
 function useSearchParams(defaultInit) {
    true ? warning(typeof URLSearchParams !== "undefined", "You cannot use the `useSearchParams` hook in a browser that does not " + "support the URLSearchParams API. If you need to support Internet " + "Explorer 11, we recommend you load a polyfill such as " + "https://github.com/ungap/url-search-params\n\n" + "If you're unsure how to load polyfills, we recommend you check out " + "https://polyfill.io/v3/ which provides some recommendations about how " + "to load polyfills only for users that need them, instead of for every " + "user.") : 0;
   let defaultSearchParamsRef = react__WEBPACK_IMPORTED_MODULE_0__.useRef(createSearchParams(defaultInit));
+  let hasSetSearchParamsRef = react__WEBPACK_IMPORTED_MODULE_0__.useRef(false);
   let location = (0,react_router__WEBPACK_IMPORTED_MODULE_2__.useLocation)();
-  let searchParams = react__WEBPACK_IMPORTED_MODULE_0__.useMemo(() => getSearchParamsForLocation(location.search, defaultSearchParamsRef.current), [location.search]);
+  let searchParams = react__WEBPACK_IMPORTED_MODULE_0__.useMemo(() => // Only merge in the defaults if we haven't yet called setSearchParams.
+  // Once we call that we want those to take precedence, otherwise you can't
+  // remove a param with setSearchParams({}) if it has an initial value
+  getSearchParamsForLocation(location.search, hasSetSearchParamsRef.current ? null : defaultSearchParamsRef.current), [location.search]);
   let navigate = (0,react_router__WEBPACK_IMPORTED_MODULE_2__.useNavigate)();
   let setSearchParams = react__WEBPACK_IMPORTED_MODULE_0__.useCallback((nextInit, navigateOptions) => {
     const newSearchParams = createSearchParams(typeof nextInit === "function" ? nextInit(searchParams) : nextInit);
+    hasSetSearchParamsRef.current = true;
     navigate("?" + newSearchParams, navigateOptions);
   }, [navigate, searchParams]);
   return [searchParams, setSearchParams];
@@ -35152,6 +35728,7 @@ function useSubmitImpl(fetcherKey, routeId) {
     let href = url.pathname + url.search;
     let opts = {
       replace: options.replace,
+      preventScrollReset: options.preventScrollReset,
       formData,
       formMethod: method,
       formEncType: encType
@@ -35175,11 +35752,10 @@ function useFormAction(action, _temp2) {
   } = react__WEBPACK_IMPORTED_MODULE_0__.useContext(react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_NavigationContext);
   let routeContext = react__WEBPACK_IMPORTED_MODULE_0__.useContext(react_router__WEBPACK_IMPORTED_MODULE_2__.UNSAFE_RouteContext);
   !routeContext ?  true ? (0,react_router__WEBPACK_IMPORTED_MODULE_1__.invariant)(false, "useFormAction must be used inside a RouteContext") : 0 : void 0;
-  let [match] = routeContext.matches.slice(-1);
-  let resolvedAction = action != null ? action : "."; // Shallow clone path so we can modify it below, otherwise we modify the
+  let [match] = routeContext.matches.slice(-1); // Shallow clone path so we can modify it below, otherwise we modify the
   // object referenced by useMemo inside useResolvedPath
 
-  let path = _extends({}, (0,react_router__WEBPACK_IMPORTED_MODULE_2__.useResolvedPath)(resolvedAction, {
+  let path = _extends({}, (0,react_router__WEBPACK_IMPORTED_MODULE_2__.useResolvedPath)(action ? action : ".", {
     relative
   })); // Previously we set the default action to ".". The problem with this is that
   // `useResolvedPath(".")` excludes search params and the hash of the resolved
@@ -35321,9 +35897,9 @@ function useScrollRestoration(_temp3) {
     return () => {
       window.history.scrollRestoration = "auto";
     };
-  }, []); // Save positions on unload
+  }, []); // Save positions on pagehide
 
-  useBeforeUnload(react__WEBPACK_IMPORTED_MODULE_0__.useCallback(() => {
+  usePageHide(react__WEBPACK_IMPORTED_MODULE_0__.useCallback(() => {
     if (navigation.state === "idle") {
       let key = (getKey ? getKey(location, matches) : null) || location.key;
       savedScrollPositions[key] = window.scrollY;
@@ -35333,66 +35909,141 @@ function useScrollRestoration(_temp3) {
     window.history.scrollRestoration = "auto";
   }, [storageKey, getKey, navigation.state, location, matches])); // Read in any saved scroll locations
 
-  react__WEBPACK_IMPORTED_MODULE_0__.useLayoutEffect(() => {
-    try {
-      let sessionPositions = sessionStorage.getItem(storageKey || SCROLL_RESTORATION_STORAGE_KEY);
+  if (typeof document !== "undefined") {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    react__WEBPACK_IMPORTED_MODULE_0__.useLayoutEffect(() => {
+      try {
+        let sessionPositions = sessionStorage.getItem(storageKey || SCROLL_RESTORATION_STORAGE_KEY);
 
-      if (sessionPositions) {
-        savedScrollPositions = JSON.parse(sessionPositions);
+        if (sessionPositions) {
+          savedScrollPositions = JSON.parse(sessionPositions);
+        }
+      } catch (e) {// no-op, use default empty object
       }
-    } catch (e) {// no-op, use default empty object
-    }
-  }, [storageKey]); // Enable scroll restoration in the router
+    }, [storageKey]); // Enable scroll restoration in the router
+    // eslint-disable-next-line react-hooks/rules-of-hooks
 
-  react__WEBPACK_IMPORTED_MODULE_0__.useLayoutEffect(() => {
-    let disableScrollRestoration = router == null ? void 0 : router.enableScrollRestoration(savedScrollPositions, () => window.scrollY, getKey);
-    return () => disableScrollRestoration && disableScrollRestoration();
-  }, [router, getKey]); // Restore scrolling when state.restoreScrollPosition changes
+    react__WEBPACK_IMPORTED_MODULE_0__.useLayoutEffect(() => {
+      let disableScrollRestoration = router == null ? void 0 : router.enableScrollRestoration(savedScrollPositions, () => window.scrollY, getKey);
+      return () => disableScrollRestoration && disableScrollRestoration();
+    }, [router, getKey]); // Restore scrolling when state.restoreScrollPosition changes
+    // eslint-disable-next-line react-hooks/rules-of-hooks
 
-  react__WEBPACK_IMPORTED_MODULE_0__.useLayoutEffect(() => {
-    // Explicit false means don't do anything (used for submissions)
-    if (restoreScrollPosition === false) {
-      return;
-    } // been here before, scroll to it
-
-
-    if (typeof restoreScrollPosition === "number") {
-      window.scrollTo(0, restoreScrollPosition);
-      return;
-    } // try to scroll to the hash
-
-
-    if (location.hash) {
-      let el = document.getElementById(location.hash.slice(1));
-
-      if (el) {
-        el.scrollIntoView();
+    react__WEBPACK_IMPORTED_MODULE_0__.useLayoutEffect(() => {
+      // Explicit false means don't do anything (used for submissions)
+      if (restoreScrollPosition === false) {
         return;
-      }
-    } // Opt out of scroll reset if this link requested it
+      } // been here before, scroll to it
 
 
-    if (preventScrollReset === true) {
-      return;
-    } // otherwise go to the top on new locations
+      if (typeof restoreScrollPosition === "number") {
+        window.scrollTo(0, restoreScrollPosition);
+        return;
+      } // try to scroll to the hash
 
 
-    window.scrollTo(0, 0);
-  }, [location, restoreScrollPosition, preventScrollReset]);
+      if (location.hash) {
+        let el = document.getElementById(location.hash.slice(1));
+
+        if (el) {
+          el.scrollIntoView();
+          return;
+        }
+      } // Don't reset if this navigation opted out
+
+
+      if (preventScrollReset === true) {
+        return;
+      } // otherwise go to the top on new locations
+
+
+      window.scrollTo(0, 0);
+    }, [location, restoreScrollPosition, preventScrollReset]);
+  }
 }
+/**
+ * Setup a callback to be fired on the window's `beforeunload` event. This is
+ * useful for saving some data to `window.localStorage` just before the page
+ * refreshes.
+ *
+ * Note: The `callback` argument should be a function created with
+ * `React.useCallback()`.
+ */
 
-function useBeforeUnload(callback) {
+
+function useBeforeUnload(callback, options) {
+  let {
+    capture
+  } = options || {};
   react__WEBPACK_IMPORTED_MODULE_0__.useEffect(() => {
-    window.addEventListener("beforeunload", callback);
+    let opts = capture != null ? {
+      capture
+    } : undefined;
+    window.addEventListener("beforeunload", callback, opts);
     return () => {
-      window.removeEventListener("beforeunload", callback);
+      window.removeEventListener("beforeunload", callback, opts);
     };
-  }, [callback]);
-} //#endregion
+  }, [callback, capture]);
+}
+/**
+ * Setup a callback to be fired on the window's `pagehide` event. This is
+ * useful for saving some data to `window.localStorage` just before the page
+ * refreshes.  This event is better supported than beforeunload across browsers.
+ *
+ * Note: The `callback` argument should be a function created with
+ * `React.useCallback()`.
+ */
+
+function usePageHide(callback, options) {
+  let {
+    capture
+  } = options || {};
+  react__WEBPACK_IMPORTED_MODULE_0__.useEffect(() => {
+    let opts = capture != null ? {
+      capture
+    } : undefined;
+    window.addEventListener("pagehide", callback, opts);
+    return () => {
+      window.removeEventListener("pagehide", callback, opts);
+    };
+  }, [callback, capture]);
+}
+/**
+ * Wrapper around useBlocker to show a window.confirm prompt to users instead
+ * of building a custom UI with useBlocker.
+ *
+ * Warning: This has *a lot of rough edges* and behaves very differently (and
+ * very incorrectly in some cases) across browsers if user click addition
+ * back/forward navigations while the confirm is open.  Use at your own risk.
+ */
+
+
+function usePrompt(_ref8) {
+  let {
+    when,
+    message
+  } = _ref8;
+  let blocker = (0,react_router__WEBPACK_IMPORTED_MODULE_2__.unstable_useBlocker)(when);
+  react__WEBPACK_IMPORTED_MODULE_0__.useEffect(() => {
+    if (blocker.state === "blocked" && !when) {
+      blocker.reset();
+    }
+  }, [blocker, when]);
+  react__WEBPACK_IMPORTED_MODULE_0__.useEffect(() => {
+    if (blocker.state === "blocked") {
+      let proceed = window.confirm(message);
+
+      if (proceed) {
+        setTimeout(blocker.proceed, 0);
+      } else {
+        blocker.reset();
+      }
+    }
+  }, [blocker, message]);
+}
 ////////////////////////////////////////////////////////////////////////////////
 //#region Utils
 ////////////////////////////////////////////////////////////////////////////////
-
 
 function warning(cond, message) {
   if (!cond) {
@@ -35416,10 +36067,10 @@ function warning(cond, message) {
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/react-router@6.4.4_react@18.2.0/node_modules/react-router/dist/index.js":
-/*!****************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/react-router@6.4.4_react@18.2.0/node_modules/react-router/dist/index.js ***!
-  \****************************************************************************************************/
+/***/ "./node_modules/react-router/dist/index.js":
+/*!*************************************************!*\
+  !*** ./node_modules/react-router/dist/index.js ***!
+  \*************************************************/
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
 __webpack_require__.r(__webpack_exports__);
@@ -35436,7 +36087,6 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "Routes": () => (/* binding */ Routes),
 /* harmony export */   "UNSAFE_DataRouterContext": () => (/* binding */ DataRouterContext),
 /* harmony export */   "UNSAFE_DataRouterStateContext": () => (/* binding */ DataRouterStateContext),
-/* harmony export */   "UNSAFE_DataStaticRouterContext": () => (/* binding */ DataStaticRouterContext),
 /* harmony export */   "UNSAFE_LocationContext": () => (/* binding */ LocationContext),
 /* harmony export */   "UNSAFE_NavigationContext": () => (/* binding */ NavigationContext),
 /* harmony export */   "UNSAFE_RouteContext": () => (/* binding */ RouteContext),
@@ -35455,6 +36105,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "redirect": () => (/* reexport safe */ _remix_run_router__WEBPACK_IMPORTED_MODULE_0__.redirect),
 /* harmony export */   "renderMatches": () => (/* binding */ renderMatches),
 /* harmony export */   "resolvePath": () => (/* reexport safe */ _remix_run_router__WEBPACK_IMPORTED_MODULE_0__.resolvePath),
+/* harmony export */   "unstable_useBlocker": () => (/* binding */ useBlocker),
 /* harmony export */   "useActionData": () => (/* binding */ useActionData),
 /* harmony export */   "useAsyncError": () => (/* binding */ useAsyncError),
 /* harmony export */   "useAsyncValue": () => (/* binding */ useAsyncValue),
@@ -35476,11 +36127,11 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "useRouteLoaderData": () => (/* binding */ useRouteLoaderData),
 /* harmony export */   "useRoutes": () => (/* binding */ useRoutes)
 /* harmony export */ });
-/* harmony import */ var _remix_run_router__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @remix-run/router */ "./node_modules/.pnpm/@remix-run+router@1.0.4/node_modules/@remix-run/router/dist/router.js");
-/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! react */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js");
+/* harmony import */ var _remix_run_router__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! @remix-run/router */ "./node_modules/@remix-run/router/dist/router.js");
+/* harmony import */ var react__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! react */ "./node_modules/react/index.js");
 /* harmony import */ var react__WEBPACK_IMPORTED_MODULE_1___default = /*#__PURE__*/__webpack_require__.n(react__WEBPACK_IMPORTED_MODULE_1__);
 /**
- * React Router v6.4.4
+ * React Router v6.8.1
  *
  * Copyright (c) Remix Software Inc.
  *
@@ -35688,13 +36339,6 @@ const isServerEnvironment = !canUseDOM;
 const shim = isServerEnvironment ? useSyncExternalStore$1 : useSyncExternalStore$2;
 const useSyncExternalStore = "useSyncExternalStore" in react__WEBPACK_IMPORTED_MODULE_1__ ? (module => module.useSyncExternalStore)(react__WEBPACK_IMPORTED_MODULE_1__) : shim;
 
-// Contexts for data routers
-const DataStaticRouterContext = /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createContext(null);
-
-if (true) {
-  DataStaticRouterContext.displayName = "DataStaticRouterContext";
-}
-
 const DataRouterContext = /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createContext(null);
 
 if (true) {
@@ -35744,7 +36388,7 @@ if (true) {
  * Returns the full href for the given "to" value. This is useful for building
  * custom links that are also accessible and preserve right-click behavior.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-href
+ * @see https://reactrouter.com/hooks/use-href
  */
 
 function useHref(to, _temp) {
@@ -35783,7 +36427,7 @@ function useHref(to, _temp) {
 /**
  * Returns true if this component is a descendant of a <Router>.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-in-router-context
+ * @see https://reactrouter.com/hooks/use-in-router-context
  */
 
 function useInRouterContext() {
@@ -35797,7 +36441,7 @@ function useInRouterContext() {
  * "routing" in your app, and we'd like to know what your use case is. We may
  * be able to provide something higher-level to better suit your needs.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-location
+ * @see https://reactrouter.com/hooks/use-location
  */
 
 function useLocation() {
@@ -35810,7 +36454,7 @@ function useLocation() {
  * Returns the current navigation action which describes how the router came to
  * the current location, either by a pop, push, or replace on the history stack.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-navigation-type
+ * @see https://reactrouter.com/hooks/use-navigation-type
  */
 
 function useNavigationType() {
@@ -35821,7 +36465,7 @@ function useNavigationType() {
  * This is useful for components that need to know "active" state, e.g.
  * <NavLink>.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-match
+ * @see https://reactrouter.com/hooks/use-match
  */
 
 function useMatch(pattern) {
@@ -35841,7 +36485,7 @@ function useMatch(pattern) {
  * Returns an imperative method for changing the location. Used by <Link>s, but
  * may also be used by other elements to change the location.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-navigate
+ * @see https://reactrouter.com/hooks/use-navigate
  */
 function useNavigate() {
   !useInRouterContext() ?  true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, // TODO: This error is probably because they somehow have 2 versions of the
@@ -35892,7 +36536,7 @@ const OutletContext = /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createCont
 /**
  * Returns the context (if provided) for the child route at this level of the route
  * hierarchy.
- * @see https://reactrouter.com/docs/en/v6/hooks/use-outlet-context
+ * @see https://reactrouter.com/hooks/use-outlet-context
  */
 
 function useOutletContext() {
@@ -35902,7 +36546,7 @@ function useOutletContext() {
  * Returns the element for the child route at this level of the route
  * hierarchy. Used internally by <Outlet> to render child routes.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-outlet
+ * @see https://reactrouter.com/hooks/use-outlet
  */
 
 function useOutlet(context) {
@@ -35920,7 +36564,7 @@ function useOutlet(context) {
  * Returns an object of key/value pairs of the dynamic params from the current
  * URL that were matched by the route path.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-params
+ * @see https://reactrouter.com/hooks/use-params
  */
 
 function useParams() {
@@ -35933,7 +36577,7 @@ function useParams() {
 /**
  * Resolves the pathname of the given `to` value against the current location.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-resolved-path
+ * @see https://reactrouter.com/hooks/use-resolved-path
  */
 
 function useResolvedPath(to, _temp2) {
@@ -35955,7 +36599,7 @@ function useResolvedPath(to, _temp2) {
  * elements in the tree must render an <Outlet> to render their child route's
  * element.
  *
- * @see https://reactrouter.com/docs/en/v6/hooks/use-routes
+ * @see https://reactrouter.com/hooks/use-routes
  */
 
 function useRoutes(routes, locationArg) {
@@ -36066,17 +36710,23 @@ function DefaultErrorElement() {
     padding: "2px 4px",
     backgroundColor: lightgrey
   };
-  return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(react__WEBPACK_IMPORTED_MODULE_1__.Fragment, null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("h2", null, "Unhandled Thrown Error!"), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("h3", {
+  let devInfo = null;
+
+  if (true) {
+    devInfo = /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(react__WEBPACK_IMPORTED_MODULE_1__.Fragment, null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("p", null, "\uD83D\uDCBF Hey developer \uD83D\uDC4B"), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("p", null, "You can provide a way better UX than this when your app throws errors by providing your own\xA0", /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("code", {
+      style: codeStyles
+    }, "errorElement"), " props on\xA0", /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("code", {
+      style: codeStyles
+    }, "<Route>")));
+  }
+
+  return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(react__WEBPACK_IMPORTED_MODULE_1__.Fragment, null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("h2", null, "Unexpected Application Error!"), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("h3", {
     style: {
       fontStyle: "italic"
     }
   }, message), stack ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("pre", {
     style: preStyles
-  }, stack) : null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("p", null, "\uD83D\uDCBF Hey developer \uD83D\uDC4B"), /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("p", null, "You can provide a way better UX than this when your app throws errors by providing your own\xA0", /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("code", {
-    style: codeStyles
-  }, "errorElement"), " props on\xA0", /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement("code", {
-    style: codeStyles
-  }, "<Route>")));
+  }, stack) : null, devInfo);
 }
 
 class RenderErrorBoundary extends react__WEBPACK_IMPORTED_MODULE_1__.Component {
@@ -36125,10 +36775,12 @@ class RenderErrorBoundary extends react__WEBPACK_IMPORTED_MODULE_1__.Component {
   }
 
   render() {
-    return this.state.error ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(RouteErrorContext.Provider, {
+    return this.state.error ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(RouteContext.Provider, {
+      value: this.props.routeContext
+    }, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(RouteErrorContext.Provider, {
       value: this.state.error,
       children: this.props.component
-    }) : this.props.children;
+    })) : this.props.children;
   }
 
 }
@@ -36139,11 +36791,11 @@ function RenderedRoute(_ref) {
     match,
     children
   } = _ref;
-  let dataStaticRouterContext = react__WEBPACK_IMPORTED_MODULE_1__.useContext(DataStaticRouterContext); // Track how deep we got in our render pass to emulate SSR componentDidCatch
+  let dataRouterContext = react__WEBPACK_IMPORTED_MODULE_1__.useContext(DataRouterContext); // Track how deep we got in our render pass to emulate SSR componentDidCatch
   // in a DataStaticRouter
 
-  if (dataStaticRouterContext && match.route.errorElement) {
-    dataStaticRouterContext._deepestRenderedBoundaryId = match.route.id;
+  if (dataRouterContext && dataRouterContext.static && dataRouterContext.staticContext && match.route.errorElement) {
+    dataRouterContext.staticContext._deepestRenderedBoundaryId = match.route.id;
   }
 
   return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(RouteContext.Provider, {
@@ -36180,12 +36832,13 @@ function _renderMatches(matches, parentMatches, dataRouterState) {
     let error = match.route.id ? errors == null ? void 0 : errors[match.route.id] : null; // Only data routers handle errors
 
     let errorElement = dataRouterState ? match.route.errorElement || /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(DefaultErrorElement, null) : null;
+    let matches = parentMatches.concat(renderedMatches.slice(0, index + 1));
 
     let getChildren = () => /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(RenderedRoute, {
       match: match,
       routeContext: {
         outlet,
-        matches: parentMatches.concat(renderedMatches.slice(0, index + 1))
+        matches
       }
     }, error ? errorElement : match.route.element !== undefined ? match.route.element : outlet); // Only wrap in an error boundary within data router usages when we have an
     // errorElement on this route.  Otherwise let it bubble up to an ancestor
@@ -36196,13 +36849,18 @@ function _renderMatches(matches, parentMatches, dataRouterState) {
       location: dataRouterState.location,
       component: errorElement,
       error: error,
-      children: getChildren()
+      children: getChildren(),
+      routeContext: {
+        outlet: null,
+        matches
+      }
     }) : getChildren();
   }, null);
 }
 var DataRouterHook;
 
 (function (DataRouterHook) {
+  DataRouterHook["UseBlocker"] = "useBlocker";
   DataRouterHook["UseRevalidator"] = "useRevalidator";
 })(DataRouterHook || (DataRouterHook = {}));
 
@@ -36219,7 +36877,7 @@ var DataRouterStateHook;
 })(DataRouterStateHook || (DataRouterStateHook = {}));
 
 function getDataRouterConsoleError(hookName) {
-  return hookName + " must be used within a data router.  See https://reactrouter.com/en/main/routers/picking-a-router.";
+  return hookName + " must be used within a data router.  See https://reactrouter.com/routers/picking-a-router.";
 }
 
 function useDataRouterContext(hookName) {
@@ -36232,6 +36890,19 @@ function useDataRouterState(hookName) {
   let state = react__WEBPACK_IMPORTED_MODULE_1__.useContext(DataRouterStateContext);
   !state ?  true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, getDataRouterConsoleError(hookName)) : 0 : void 0;
   return state;
+}
+
+function useRouteContext(hookName) {
+  let route = react__WEBPACK_IMPORTED_MODULE_1__.useContext(RouteContext);
+  !route ?  true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, getDataRouterConsoleError(hookName)) : 0 : void 0;
+  return route;
+}
+
+function useCurrentRouteId(hookName) {
+  let route = useRouteContext(hookName);
+  let thisRoute = route.matches[route.matches.length - 1];
+  !thisRoute.route.id ?  true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, hookName + " can only be used on routes that contain a unique \"id\"") : 0 : void 0;
+  return thisRoute.route.id;
 }
 /**
  * Returns the current navigation, defaulting to an "idle" navigation when
@@ -36289,11 +36960,14 @@ function useMatches() {
 
 function useLoaderData() {
   let state = useDataRouterState(DataRouterStateHook.UseLoaderData);
-  let route = react__WEBPACK_IMPORTED_MODULE_1__.useContext(RouteContext);
-  !route ?  true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, "useLoaderData must be used inside a RouteContext") : 0 : void 0;
-  let thisRoute = route.matches[route.matches.length - 1];
-  !thisRoute.route.id ?  true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, "useLoaderData can only be used on routes that contain a unique \"id\"") : 0 : void 0;
-  return state.loaderData[thisRoute.route.id];
+  let routeId = useCurrentRouteId(DataRouterStateHook.UseLoaderData);
+
+  if (state.errors && state.errors[routeId] != null) {
+    console.error("You cannot `useLoaderData` in an errorElement (routeId: " + routeId + ")");
+    return undefined;
+  }
+
+  return state.loaderData[routeId];
 }
 /**
  * Returns the loaderData for the given routeId
@@ -36324,18 +36998,15 @@ function useRouteError() {
 
   let error = react__WEBPACK_IMPORTED_MODULE_1__.useContext(RouteErrorContext);
   let state = useDataRouterState(DataRouterStateHook.UseRouteError);
-  let route = react__WEBPACK_IMPORTED_MODULE_1__.useContext(RouteContext);
-  let thisRoute = route.matches[route.matches.length - 1]; // If this was a render error, we put it in a RouteError context inside
+  let routeId = useCurrentRouteId(DataRouterStateHook.UseRouteError); // If this was a render error, we put it in a RouteError context inside
   // of RenderErrorBoundary
 
   if (error) {
     return error;
-  }
+  } // Otherwise look for errors from our data router state
 
-  !route ?  true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, "useRouteError must be used inside a RouteContext") : 0 : void 0;
-  !thisRoute.route.id ?  true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, "useRouteError can only be used on routes that contain a unique \"id\"") : 0 : void 0; // Otherwise look for errors from our data router state
 
-  return (_state$errors = state.errors) == null ? void 0 : _state$errors[thisRoute.route.id];
+  return (_state$errors = state.errors) == null ? void 0 : _state$errors[routeId];
 }
 /**
  * Returns the happy-path data from the nearest ancestor <Await /> value
@@ -36352,6 +37023,27 @@ function useAsyncValue() {
 function useAsyncError() {
   let value = react__WEBPACK_IMPORTED_MODULE_1__.useContext(AwaitContext);
   return value == null ? void 0 : value._error;
+}
+let blockerId = 0;
+/**
+ * Allow the application to block navigations within the SPA and present the
+ * user a confirmation dialog to confirm the navigation.  Mostly used to avoid
+ * using half-filled form data.  This does not handle hard-reloads or
+ * cross-origin navigations.
+ */
+
+function useBlocker(shouldBlock) {
+  let {
+    router
+  } = useDataRouterContext(DataRouterHook.UseBlocker);
+  let [blockerKey] = react__WEBPACK_IMPORTED_MODULE_1__.useState(() => String(++blockerId));
+  let blockerFunction = react__WEBPACK_IMPORTED_MODULE_1__.useCallback(args => {
+    return typeof shouldBlock === "function" ? !!shouldBlock(args) : !!shouldBlock;
+  }, [shouldBlock]);
+  let blocker = router.getBlocker(blockerKey, blockerFunction); // Cleanup on unmount
+
+  react__WEBPACK_IMPORTED_MODULE_1__.useEffect(() => () => router.deleteBlocker(blockerKey), [router, blockerKey]);
+  return blocker;
 }
 const alreadyWarned = {};
 
@@ -36391,8 +37083,14 @@ function RouterProvider(_ref) {
       })
     };
   }, [router]);
-  let basename = router.basename || "/";
-  return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(DataRouterContext.Provider, {
+  let basename = router.basename || "/"; // The fragment and {null} here are important!  We need them to keep React 18's
+  // useId happy when we are server-rendering since we may have a <script> here
+  // containing the hydrated server-side staticContext (from StaticRouterProvider).
+  // useId relies on the component tree structure to generate deterministic id's
+  // so we need to ensure it remains the same on the client even though
+  // we don't need the <script> tag
+
+  return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(react__WEBPACK_IMPORTED_MODULE_1__.Fragment, null, /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(DataRouterContext.Provider, {
     value: {
       router,
       navigator,
@@ -36407,13 +37105,13 @@ function RouterProvider(_ref) {
     location: router.state.location,
     navigationType: router.state.historyAction,
     navigator: navigator
-  }, router.state.initialized ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(Routes, null) : fallbackElement)));
+  }, router.state.initialized ? /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(Routes, null) : fallbackElement))), null);
 }
 
 /**
  * A <Router> that stores all entries in memory.
  *
- * @see https://reactrouter.com/docs/en/v6/routers/memory-router
+ * @see https://reactrouter.com/router-components/memory-router
  */
 function MemoryRouter(_ref2) {
   let {
@@ -36454,7 +37152,7 @@ function MemoryRouter(_ref2) {
  * able to use hooks. In functional components, we recommend you use the
  * `useNavigate` hook instead.
  *
- * @see https://reactrouter.com/docs/en/v6/components/navigate
+ * @see https://reactrouter.com/components/navigate
  */
 function Navigate(_ref3) {
   let {
@@ -36489,7 +37187,7 @@ function Navigate(_ref3) {
 /**
  * Renders the child route's element, if there is one.
  *
- * @see https://reactrouter.com/docs/en/v6/components/outlet
+ * @see https://reactrouter.com/components/outlet
  */
 function Outlet(props) {
   return useOutlet(props.context);
@@ -36498,7 +37196,7 @@ function Outlet(props) {
 /**
  * Declares an element that should be rendered at a certain URL path.
  *
- * @see https://reactrouter.com/docs/en/v6/components/route
+ * @see https://reactrouter.com/components/route
  */
 function Route(_props) {
    true ? (0,_remix_run_router__WEBPACK_IMPORTED_MODULE_0__.invariant)(false, "A <Route> is only ever to be used as the child of <Routes> element, " + "never rendered directly. Please wrap your <Route> in a <Routes>.") : 0 ;
@@ -36511,7 +37209,7 @@ function Route(_props) {
  * router that is more specific to your environment such as a <BrowserRouter>
  * in web browsers or a <StaticRouter> for server rendering.
  *
- * @see https://reactrouter.com/docs/en/v6/routers/router
+ * @see https://reactrouter.com/router-components/router
  */
 function Router(_ref4) {
   let {
@@ -36579,7 +37277,7 @@ function Router(_ref4) {
  * A container for a nested tree of <Route> elements that renders the branch
  * that best matches the current location.
  *
- * @see https://reactrouter.com/docs/en/v6/components/routes
+ * @see https://reactrouter.com/components/routes
  */
 function Routes(_ref5) {
   let {
@@ -36727,12 +37425,8 @@ function ResolveAwait(_ref7) {
     children
   } = _ref7;
   let data = useAsyncValue();
-
-  if (typeof children === "function") {
-    return children(data);
-  }
-
-  return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(react__WEBPACK_IMPORTED_MODULE_1__.Fragment, null, children);
+  let toRender = typeof children === "function" ? children(data) : children;
+  return /*#__PURE__*/react__WEBPACK_IMPORTED_MODULE_1__.createElement(react__WEBPACK_IMPORTED_MODULE_1__.Fragment, null, toRender);
 } ///////////////////////////////////////////////////////////////////////////////
 // UTILS
 ///////////////////////////////////////////////////////////////////////////////
@@ -36742,7 +37436,7 @@ function ResolveAwait(_ref7) {
  * either a `<Route>` element or an array of them. Used internally by
  * `<Routes>` to create a route config from its children.
  *
- * @see https://reactrouter.com/docs/en/v6/utils/create-routes-from-children
+ * @see https://reactrouter.com/utils/create-routes-from-children
  */
 
 
@@ -36837,10 +37531,10 @@ function createMemoryRouter(routes, opts) {
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/react@18.2.0/node_modules/react/cjs/react.development.js":
-/*!*************************************************************************************!*\
-  !*** ./node_modules/.pnpm/react@18.2.0/node_modules/react/cjs/react.development.js ***!
-  \*************************************************************************************/
+/***/ "./node_modules/react/cjs/react.development.js":
+/*!*****************************************************!*\
+  !*** ./node_modules/react/cjs/react.development.js ***!
+  \*****************************************************/
 /***/ ((module, exports, __webpack_require__) => {
 
 /* module decorator */ module = __webpack_require__.nmd(module);
@@ -39587,25 +40281,25 @@ if (
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js":
-/*!*********************************************************************!*\
-  !*** ./node_modules/.pnpm/react@18.2.0/node_modules/react/index.js ***!
-  \*********************************************************************/
+/***/ "./node_modules/react/index.js":
+/*!*************************************!*\
+  !*** ./node_modules/react/index.js ***!
+  \*************************************/
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
 
 
 if (false) {} else {
-  module.exports = __webpack_require__(/*! ./cjs/react.development.js */ "./node_modules/.pnpm/react@18.2.0/node_modules/react/cjs/react.development.js");
+  module.exports = __webpack_require__(/*! ./cjs/react.development.js */ "./node_modules/react/cjs/react.development.js");
 }
 
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/scheduler@0.23.0/node_modules/scheduler/cjs/scheduler.development.js":
-/*!*************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/scheduler@0.23.0/node_modules/scheduler/cjs/scheduler.development.js ***!
-  \*************************************************************************************************/
+/***/ "./node_modules/scheduler/cjs/scheduler.development.js":
+/*!*************************************************************!*\
+  !*** ./node_modules/scheduler/cjs/scheduler.development.js ***!
+  \*************************************************************/
 /***/ ((__unused_webpack_module, exports) => {
 
 /**
@@ -40246,16 +40940,16 @@ if (
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/scheduler@0.23.0/node_modules/scheduler/index.js":
-/*!*****************************************************************************!*\
-  !*** ./node_modules/.pnpm/scheduler@0.23.0/node_modules/scheduler/index.js ***!
-  \*****************************************************************************/
+/***/ "./node_modules/scheduler/index.js":
+/*!*****************************************!*\
+  !*** ./node_modules/scheduler/index.js ***!
+  \*****************************************/
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
 
 
 if (false) {} else {
-  module.exports = __webpack_require__(/*! ./cjs/scheduler.development.js */ "./node_modules/.pnpm/scheduler@0.23.0/node_modules/scheduler/cjs/scheduler.development.js");
+  module.exports = __webpack_require__(/*! ./cjs/scheduler.development.js */ "./node_modules/scheduler/cjs/scheduler.development.js");
 }
 
 
@@ -40271,9 +40965,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _node_modules_pnpm_style_loader_2_0_0_webpack_5_75_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! !../node_modules/.pnpm/style-loader@2.0.0_webpack@5.75.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js */ "./node_modules/.pnpm/style-loader@2.0.0_webpack@5.75.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js");
-/* harmony import */ var _node_modules_pnpm_style_loader_2_0_0_webpack_5_75_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_2_0_0_webpack_5_75_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__);
-/* harmony import */ var _node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_pnpm_postcss_loader_6_2_1_upg3rk2kpasnbk27hkqapxaxfq_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_App_css__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! !!../node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!../node_modules/.pnpm/postcss-loader@6.2.1_upg3rk2kpasnbk27hkqapxaxfq/node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./App.css */ "./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/.pnpm/postcss-loader@6.2.1_upg3rk2kpasnbk27hkqapxaxfq/node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/App.css");
+/* harmony import */ var _node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! !../node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js */ "./node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js");
+/* harmony import */ var _node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_App_css__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! !!../node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!../node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./App.css */ "./node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/App.css");
 
             
 
@@ -40282,11 +40976,11 @@ var options = {};
 options.insert = "head";
 options.singleton = false;
 
-var update = _node_modules_pnpm_style_loader_2_0_0_webpack_5_75_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default()(_node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_pnpm_postcss_loader_6_2_1_upg3rk2kpasnbk27hkqapxaxfq_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_App_css__WEBPACK_IMPORTED_MODULE_1__["default"], options);
+var update = _node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default()(_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_App_css__WEBPACK_IMPORTED_MODULE_1__["default"], options);
 
 
 
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (_node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_pnpm_postcss_loader_6_2_1_upg3rk2kpasnbk27hkqapxaxfq_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_App_css__WEBPACK_IMPORTED_MODULE_1__["default"].locals || {});
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_App_css__WEBPACK_IMPORTED_MODULE_1__["default"].locals || {});
 
 /***/ }),
 
@@ -40300,9 +40994,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
 /* harmony export */   "default": () => (__WEBPACK_DEFAULT_EXPORT__)
 /* harmony export */ });
-/* harmony import */ var _node_modules_pnpm_style_loader_2_0_0_webpack_5_75_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! !../node_modules/.pnpm/style-loader@2.0.0_webpack@5.75.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js */ "./node_modules/.pnpm/style-loader@2.0.0_webpack@5.75.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js");
-/* harmony import */ var _node_modules_pnpm_style_loader_2_0_0_webpack_5_75_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_pnpm_style_loader_2_0_0_webpack_5_75_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__);
-/* harmony import */ var _node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_pnpm_postcss_loader_6_2_1_upg3rk2kpasnbk27hkqapxaxfq_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_index_css__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! !!../node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!../node_modules/.pnpm/postcss-loader@6.2.1_upg3rk2kpasnbk27hkqapxaxfq/node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./index.css */ "./node_modules/.pnpm/css-loader@5.2.7_webpack@5.75.0/node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/.pnpm/postcss-loader@6.2.1_upg3rk2kpasnbk27hkqapxaxfq/node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/index.css");
+/* harmony import */ var _node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! !../node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js */ "./node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js");
+/* harmony import */ var _node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0__);
+/* harmony import */ var _node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_index_css__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! !!../node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!../node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./index.css */ "./node_modules/css-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[1]!./node_modules/postcss-loader/dist/cjs.js??ruleSet[1].rules[6].oneOf[1].use[2]!./src/index.css");
 
             
 
@@ -40311,18 +41005,18 @@ var options = {};
 options.insert = "head";
 options.singleton = false;
 
-var update = _node_modules_pnpm_style_loader_2_0_0_webpack_5_75_0_node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default()(_node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_pnpm_postcss_loader_6_2_1_upg3rk2kpasnbk27hkqapxaxfq_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_index_css__WEBPACK_IMPORTED_MODULE_1__["default"], options);
+var update = _node_modules_style_loader_dist_runtime_injectStylesIntoStyleTag_js__WEBPACK_IMPORTED_MODULE_0___default()(_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_index_css__WEBPACK_IMPORTED_MODULE_1__["default"], options);
 
 
 
-/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (_node_modules_pnpm_css_loader_5_2_7_webpack_5_75_0_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_pnpm_postcss_loader_6_2_1_upg3rk2kpasnbk27hkqapxaxfq_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_index_css__WEBPACK_IMPORTED_MODULE_1__["default"].locals || {});
+/* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (_node_modules_css_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_1_node_modules_postcss_loader_dist_cjs_js_ruleSet_1_rules_6_oneOf_1_use_2_index_css__WEBPACK_IMPORTED_MODULE_1__["default"].locals || {});
 
 /***/ }),
 
-/***/ "./node_modules/.pnpm/style-loader@2.0.0_webpack@5.75.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js":
-/*!*********************************************************************************************************************************!*\
-  !*** ./node_modules/.pnpm/style-loader@2.0.0_webpack@5.75.0/node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js ***!
-  \*********************************************************************************************************************************/
+/***/ "./node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js":
+/*!****************************************************************************!*\
+  !*** ./node_modules/style-loader/dist/runtime/injectStylesIntoStyleTag.js ***!
+  \****************************************************************************/
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
 
@@ -40682,7 +41376,7 @@ module.exports = import("https://kit.fontawesome.com/4e5a72c756.js");;
 /******/ 		// This function allow to reference async chunks
 /******/ 		__webpack_require__.u = (chunkId) => {
 /******/ 			// return url for filenames not based on template
-/******/ 			if (chunkId === "node_modules_pnpm_web-vitals_2_1_4_node_modules_web-vitals_dist_web-vitals_js") return "public/app/" + chunkId + ".js";
+/******/ 			if (chunkId === "node_modules_web-vitals_dist_web-vitals_js") return "public/app/" + chunkId + ".js";
 /******/ 			// return url for filenames based on template
 /******/ 			return undefined;
 /******/ 		};
