@@ -1,5 +1,5 @@
 [![Netlify Status](https://api.netlify.com/api/v1/badges/675c802e-59b1-4587-8efc-71b5bca67561/deploy-status)](https://app.netlify.com/sites/khoakomlem/deploys)
-![visitor badge](https://visitor-badge.glitch.me/badge?page_id=khoakomlem.khoakomlem)
+![Profile views](https://komarev.com/ghpvc/?username=khoakomlem)
 
 <h1 align="center">Hi there 👋</h1>
 <h3 align="center">🔭 Currently working on Học viện Công nghệ Bưu chính Viễn thông</h3>
