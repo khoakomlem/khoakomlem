@@ -7,8 +7,8 @@
 
 <p align="center" style="margin-bottom: 20px">
 	<br>
+	<a href="https://wakatime.com/@592c97c4-15ad-49cb-ac34-d607be35c524"><img src="https://wakatime.com/badge/user/592c97c4-15ad-49cb-ac34-d607be35c524.svg" alt="Total time coded since Apr 11 2022" /></a><br/><br/>
 	<a href="https://stackoverflow.com/users/13330500/%c4%90%e1%ba%adu-v%c4%83n-%c4%90%c4%83ng-khoa"><img src="https://stackoverflow.com/users/flair/13330500.png?theme=dark" width="208" height="58" alt="profile for Đậu Văn Đăng Khoa at Stack Overflow, Q&amp;A for professional and enthusiast programmers" title="profile for Đậu Văn Đăng Khoa at Stack Overflow, Q&amp;A for professional and enthusiast programmers"></a><br><br>
-	<a href="https://app.daily.dev/khoakomlem"><img src="https://api.daily.dev/devcards/e3bedbe48cc9441aa4c345ef9167cd40.png?r=ew3" width="400" alt="Dau Van Dang Khoa's Dev Card"/></a><br><br>
 	<img src="https://github-readme-stats.vercel.app/api?username=khoakomlem&hide=contribs,prs&count_private=true&show_icons=true&theme=dark"></img>
 	<img src="https://little.kylerconway.com/images/golang-what.gif" width="200" />
 	
