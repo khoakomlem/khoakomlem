@@ -3,7 +3,7 @@
 
 <h1 align="center">Hi there 👋</h1>
 <h3 align="center">🔭 Currently working on Học viện Công nghệ Bưu chính Viễn thông</h3>
-<h3 align="center">🌱 Learning algorithms, making some projects using Nodejs, Go, . . .</h3>
+<h3 align="center">🌱 Learning design pattern, making some games with Javascript, . . .</h3>
 
 <p align="center" style="margin-bottom: 20px">
 	<br>
