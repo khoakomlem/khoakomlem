@@ -22,3 +22,6 @@
 	<br>
 	<a href="https://app.daily.dev/khoakomlem"><img src="https://api.daily.dev/devcards/v2/t0QOLYAqdeVLuEGrWmN4R.png?r=qs2&type=wide" width="652" alt="Dau Van Dang Khoa's Dev Card"/></a>
 </p>
+
+<!--START_SECTION:waka-->
+<!--END_SECTION:waka-->
