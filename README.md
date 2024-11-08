@@ -68,8 +68,8 @@
   </div>
   <!-- Spotify Github Profile: https://github.com/kittinan/spotify-github-profile -->
   <div align="center">
-    <img src="https://little.kylerconway.com/images/golang-what.gif" width="400" />
-    <img src="https://amp.dev/static/samples/img/gopher.gif" width="140" />
+    <img src="https://little.kylerconway.com/images/golang-what.gif" width="450" />
+<!--     <img src="https://amp.dev/static/samples/img/gopher.gif" width="100" /> -->
   </div>
 </div>
 
