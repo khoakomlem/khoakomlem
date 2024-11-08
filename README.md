@@ -26,41 +26,6 @@
 <!--START_SECTION:waka-->
 ![Code Time](http://img.shields.io/badge/Code%20Time-2%2C222%20hrs%2054%20mins-blue)
 
-![Profile Views](http://img.shields.io/badge/Profile%20Views-0-blue)
-
-**🐱 My GitHub Data** 
-
-> 📦 332.9 kB Used in GitHub's Storage 
- > 
-> 🏆 866 Contributions in the Year 2024
- > 
-> 💼 Opted to Hire
- > 
-> 📜 37 Public Repositories 
- > 
-> 🔑 3 Private Repositories 
- > 
-**I'm a Night 🦉** 
-
-```text
-🌞 Morning                1900 commits        ████░░░░░░░░░░░░░░░░░░░░░   17.28 % 
-🌆 Daytime                2746 commits        ██████░░░░░░░░░░░░░░░░░░░   24.97 % 
-🌃 Evening                3102 commits        ███████░░░░░░░░░░░░░░░░░░   28.21 % 
-🌙 Night                  3250 commits        ███████░░░░░░░░░░░░░░░░░░   29.55 % 
-```
-📅 **I'm Most Productive on Saturday** 
-
-```text
-Monday                   1989 commits        █████░░░░░░░░░░░░░░░░░░░░   18.09 % 
-Tuesday                  1357 commits        ███░░░░░░░░░░░░░░░░░░░░░░   12.34 % 
-Wednesday                1556 commits        ████░░░░░░░░░░░░░░░░░░░░░   14.15 % 
-Thursday                 868 commits         ██░░░░░░░░░░░░░░░░░░░░░░░   07.89 % 
-Friday                   1490 commits        ███░░░░░░░░░░░░░░░░░░░░░░   13.55 % 
-Saturday                 2011 commits        █████░░░░░░░░░░░░░░░░░░░░   18.29 % 
-Sunday                   1727 commits        ████░░░░░░░░░░░░░░░░░░░░░   15.70 % 
-```
-
-
 📊 **This Week I Spent My Time On** 
 
 ```text
@@ -99,10 +64,6 @@ Go                       1 repo              ░░░░░░░░░░░�
 
 
 
-**Timeline**
 
-![Lines of Code chart](https://raw.githubusercontent.com/khoakomlem/khoakomlem/main/assets/bar_graph.png)
-
-
- Last Updated on 08/11/2024 17:29:17 UTC
+ Last Updated on Friday, 08/11/24 at 05:35 PM UTC
 <!--END_SECTION:waka-->
